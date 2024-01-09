@@ -111,7 +111,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ).to(device)
 
     state_dict = torch.load(
-        os.path.join(data_dir, "best_model.pth"), map_location=device
+        os.path.join(data_dir, "pretrained_weights.pth"), map_location=device
     )
     modified_state_dict = {
         key.replace("_orig_mod.module.", ""): value for key, value in state_dict.items()
