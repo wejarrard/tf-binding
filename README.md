@@ -4,7 +4,7 @@ This project aims to predict transcription factor (TF) binding sites using deep 
 
 ## Preprocessing Phase
 
-The preprocessing phase prepares the data for both pretraining and finetuning stages.
+The preprocessing phase prepares the data for the pretraining stage. Contact Thiady for the rest of the preprocessing steps.
 
 ### Key Scripts
 
