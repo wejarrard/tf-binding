@@ -255,7 +255,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     early_stopping = EarlyStopping(
         patience=args.early_stopping_patience,
         verbose=True,
-        save_path=f"/opt/ml/model/best_model.pth",
+        save_path=f"/opt/ml/model/pretrained_weights.pth",
     )
 
     ############ TENSORBOARD ############
