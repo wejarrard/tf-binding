@@ -1,2 +1,2 @@
-from config import EnformerConfig
-from deepseq import DeepSeq
+from .config import EnformerConfig
+from .deepseq import DeepSeq
