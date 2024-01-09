@@ -1,32 +1,68 @@
-# tf-binding
+# tf-binding Project
 
-This project is focused on trying to predict transcription factor binding sites using deep learning. The project is divided into three phases: preprocessing, pretraining, and finetuning. The preprocessing phase is used to generate the data for pretraining and finetuning. The pretraining and finetuning phases are used to pretrain the model.
+This project aims to predict transcription factor (TF) binding sites using deep learning. It is divided into three main phases: preprocessing, pretraining, and finetuning.
 
+## Preprocessing Phase
 
-## Pretraining
+The preprocessing phase prepares the data for both pretraining and finetuning stages.
+
+### Key Scripts
+
+Located in `src/preprocessing/`:
+
+- `negative_generation.py`: Generates negative samples.
+- `positive_generation.py`: Generates positive samples.
+- `filter.py`: Filters the generated data.
+- `test_negative.py`: Tests the generated negative samples.
+- `test_positive.py`: Tests the generated positive samples.
+
+## Pretraining Phase
+
+Pretraining is the initial model training phase, conducted on AWS.
+
+### Training Scripts
+
+- Single instance training: `src/sagemaker/pretrain.ipynb`
+- Distributed training: `src/sagemaker/pretrain_distributed.ipynb`
+
+These scripts are designed for AWS SageMaker.
+
+## Finetuning Phase
+
+Finetuning involves further training the model with specific data.
 
 ### Preprocessing
 
-Before pretraining, we need to preprocess the data. The preprocessing scripts are located in the `src/preprocessing/` directory. Here are the key scripts:
+TODO: Detail the preprocessing steps for finetuning.
 
-- `src/preprocessing/negative_generation.py`: This script is used to generate negative samples.
-- `src/preprocessing/positive_generation.py`: This script is used to generate positive samples.
-- `src/preprocessing/filter.py`: This script is used to filter the generated data.
-- `src/preprocessing/test_negative.py`: This script is used to test the generated negative samples.
-- `src/preprocessing/test_positive.py`: This script is used to test the generated positive samples.
+### AWS Setup
 
-### Training
+To run the finetuning script:
 
-After preprocessing and pretraining, we move on to the training phase. The training scripts are located in the `src/training/` directory. Here are the key scripts:
+1. Navigate to AWS SageMaker in the `us-west-2` region.
+2. Go to the Studio tab and select "Open Studio".
+3. Locate "TFBinding" under Collaborative Spaces (check permissions if not visible).
+4. This opens a Jupyter Notebook-like UI. Select the folder tab.
+5. Navigate to `tf-binding/src/sagemaker/tf_finetuning.ipynb`.
+6. Run the script. It will initialize instances and start the training process.
 
-- `src/training/pretrain.py`: This script is used for pretraining the model.
-- `src/training/finetune.py`: This script is used for fine-tuning the pretrained model.
-- `src/training/deepseq.py`: This script contains the DeepSeq model implementation.
-- `src/training/data.py`: This script is used for data handling during training.
-- `src/training/config.py`: This script contains the configuration for training.
-- `src/training/training_utils.py`: This script contains utility functions for training.
+### Training Customization
 
+- To train a new model on a different TF, change the data source in the script. For example, replace `s3://tf-binding-sites/pretraining/data/AR_ATAC_broadPeak` with your specific TF data file. Contact Thiady for guidance on generating this file.
 
-### AWS
+### Codebase
 
-Pretraining is the initial phase of training the model. In this project, we use the scripts located in `src/sagemaker/pretrain.ipynb` and `src/sagemaker/pretrain_distributed.ipynb` for pretraining. The former is used for pretraining on a single instance, while the latter is used for pretraining on multiple instances. The scripts are designed to be run on AWS SageMaker.
+- All training code is located in `tf-binding/src/training`.
+- The current finetuning script is `tf-prediction.py`.
+
+## TODO List
+
+- [ ] Write detailed README for the pretraining phase.
+- [ ] Complete the preprocessing section in the README for finetuning.
+- [ ] Add protocols and enhance code readability.
+- [ ] Implement the option to run finetuning without pretrained weights.
+- [ ] Test the model on novel Transcription Factors (TFs).
+- [ ] Attempt predictions on new cell lines.
+- [ ] Investigate and resolve issues with LNCAP.
+- [ ] Develop a model to predict multiple TFs simultaneously.
+- [ ] Create a Hugging Face space using Gradio for the project.
