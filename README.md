@@ -2,15 +2,7 @@
 
 This project is focused on predicting transcription factor (TF) binding sites using deep learning. It's organized into three main phases: preprocessing, pretraining, and finetuning.
 
-### Key Scripts
 
-Located in `src/preprocessing/`:
-
-- **`negative_generation.py`**: Generates negative samples.
-- **`positive_generation.py`**: Generates positive samples.
-- **`filter.py`**: Filters the generated data.
-- **`test_negative.py`**: Tests the generated negative samples.
-- **`test_positive.py`**: Tests the generated positive samples.
 
 ## Pretraining Phase
 
@@ -19,6 +11,16 @@ Pretraining is the initial model training phase, conducted on AWS.
 ### Preprocessing
 
 The preprocessing phase prepares the data for the pretraining stage. For additional steps, contact Thiady for the rest of the preprocessing steps to be applied before these scripts in src/preprocessing.
+
+#### Key Scripts
+
+Located in `src/preprocessing/`:
+
+- **`negative_generation.py`**: Generates negative samples.
+- **`positive_generation.py`**: Generates positive samples.
+- **`filter.py`**: Filters the generated data.
+- **`test_negative.py`**: Tests the generated negative samples.
+- **`test_positive.py`**: Tests the generated positive samples.
 
 ### Training Scripts
 
