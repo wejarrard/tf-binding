@@ -22,7 +22,7 @@ Located in `src/preprocessing/`:
 - **`test_negative.py`**: Tests the generated negative samples.
 - **`test_positive.py`**: Tests the generated positive samples.
 
-### Training Scripts
+### Training
 
 - **Single instance training**: `src/sagemaker/pretrain.ipynb`
 - **Distributed training**: `src/sagemaker/pretrain_distributed.ipynb`
