@@ -89,10 +89,12 @@ Steps to run the finetuning script:
 - [ ] Overlap of AR Binding site with STAR-seq data.
   - [ ] Pull down training predictions as well as validation
   - [ ] Compare that to STAR-seq data
+- [ ] Develop a model to predict multiple TFs simultaneously.
+  - [ ] Modify inputs to have both positive and negative columns listing the TFs.
+  - [ ] Look into how to solve deep learning problems with incomplete data (freeze weights or loss function?)
 - [ ] Investigate and resolve issues with LNCAP.
 - [ ] Implement the option to run finetuning without pretrained weights.
 - [ ] Test the model on novel Transcription Factors.
 - [ ] Attempt predictions on new cell lines.
-- [ ] Develop a model to predict multiple TFs simultaneously.
 - [ ] Naming convention for cell lines.
 - [ ] Create a Hugging Face space using Gradio for the project.
