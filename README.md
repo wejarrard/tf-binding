@@ -26,6 +26,15 @@ Located in `src/preprocessing/`:
 
 - **Single instance training**: `src/sagemaker/pretrain.ipynb`
 - **Distributed training**: `src/sagemaker/pretrain_distributed.ipynb`
+- 
+Steps to run the finetuning script:
+
+1. Navigate to AWS SageMaker in the `us-west-2` region.
+2. Go to the Studio tab and select "Open Studio".
+3. Locate "TFBinding" under Collaborative Spaces (check permissions if not visible).
+4. This opens a Jupyter Notebook-like UI. Select the folder tab.
+5. Navigate to pretraining script (see above).
+6. Run the script to initialize instances and start the training process.
 
 *Note: These scripts are designed for AWS SageMaker.*
 
