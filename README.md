@@ -94,4 +94,5 @@ Steps to run the finetuning script:
 - [ ] Test the model on novel Transcription Factors.
 - [ ] Attempt predictions on new cell lines.
 - [ ] Develop a model to predict multiple TFs simultaneously.
+- [ ] Naming convention for cell lines.
 - [ ] Create a Hugging Face space using Gradio for the project.
