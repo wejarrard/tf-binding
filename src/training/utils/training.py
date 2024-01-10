@@ -162,7 +162,7 @@ def train_one_epoch(
 
 
 def validate_one_epoch(
-    model: nn.Module,
+    model,
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,

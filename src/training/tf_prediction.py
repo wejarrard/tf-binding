@@ -103,8 +103,6 @@ def main(hyperparams: HyperParams) -> None:
         num_downsamples=5,
     )
 
-    model.to(device)
-
     state_dict = torch.load(
         os.path.join(hyperparams.data_dir, "pretrained_weights.pth"),
         map_location=device,
@@ -126,11 +124,10 @@ def main(hyperparams: HyperParams) -> None:
     if DISTRIBUTED:
         # https://github.com/dougsouza/pytorch-sync-batchnorm-example
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model.to(device)
+        model = model.to(device)
         model = DDP(model)
-
     else:
-        model.to(device)
+        model = model.to(device)
 
     # model = torch.compile(model) if gpu_ok else model
     model = torch.compile(model) if torch.cuda.is_available() else model
