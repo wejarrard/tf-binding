@@ -75,8 +75,8 @@ Steps to run the finetuning script:
 ## TODO
 
 - [x] Complete the preprocessing section in the README for finetuning.
+- [x] Add protocols and enhance code readability.
 - [ ] Write detailed README for the pretraining phase.
-- [ ] Add protocols and enhance code readability.
 - [ ] Investigate and resolve issues with LNCAP.
 - [ ] Implement the option to run finetuning without pretrained weights.
 - [ ] Test the model on novel Transcription Factors.
