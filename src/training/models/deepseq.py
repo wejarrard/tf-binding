@@ -539,25 +539,6 @@ class DeepSeq(PreTrainedModel):
         if return_only_embeddings:
             return x
 
-        # out = map_values(lambda fn: fn(x), self.heads)
-
-        # if exists(head):
-        #     assert head in self._heads, f"head {head} not found"
-        #     out = out[head]
-
-        # if exists(target):
-        #     assert exists(
-        #         head
-        #     ), "head must be passed in if one were to calculate loss directly with targets"
-
-        #     if return_corr_coef:
-        #         return pearson_corr_coef(out, target)
-
-        #     return poisson_loss(out, target)
-
-        # if return_embeddings:
-        #     return out, x
-
         out = self.out(x)
 
         return out

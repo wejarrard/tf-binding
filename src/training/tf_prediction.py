@@ -1,8 +1,9 @@
 # pretrain.py
 import argparse
+import dataclasses
 import os
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pysam
 import torch
@@ -12,93 +13,85 @@ import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from models.deepseq import DeepSeq
+from pyexpat import model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 from utils.earlystopping import EarlyStopping
-from utils.training import count_directories, train_one_epoch, validate_one_epoch
+from utils.training import (
+    count_directories,
+    get_params_without_weight_decay_ln,
+    train_one_epoch,
+    validate_one_epoch,
+)
+
+torch.autograd.anomaly_mode.set_detect_anomaly(True)
 
 seed_value = 42
 torch.manual_seed(seed_value)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed_value)
 
-torch.autograd.set_detect_anomaly(True)
-
 # hide user warning
 warnings.filterwarnings("ignore", category=UserWarning)
 pysam.set_verbosity(0)
 
 sm_hosts_str = os.environ.get("SM_HOSTS", "")
-sm_hosts = sm_hosts_str.split(",")
-
-if len(sm_hosts) > 1:
-    DISTRIBUTED = True
-else:
-    # Use the number of GPUs as a fallback
-    DISTRIBUTED = torch.cuda.device_count() > 1
+DISTRIBUTED = len(sm_hosts_str.split(",")) > 1 or torch.cuda.device_count() > 1
 
 
 ############ HYPERPARAMETERS ############
 @dataclass
 class HyperParams:
+    # Hyperparameters and environment variable-based parameters
     num_epochs: int = 50
     batch_size: int = 8 if torch.cuda.is_available() else 1
-
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
     focal_loss_alpha: float = 1
     focal_loss_gamma: float = 2
 
+    model_output: str = "/opt/ml/model"
+    data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "")
+    local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
-def get_params_without_weight_decay_ln(named_params, weight_decay):
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [
-                p for n, p in named_params if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": weight_decay,
-        },
-        {
-            "params": [p for n, p in named_params if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    return optimizer_grouped_parameters
-
-
-def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
-    ############ DEVICE ############
-
-    # Check for CUDA availability
-    if not torch.cuda.is_available():
-        device = torch.device("cpu")
-        gpu_ok = False
-    else:
-        if DISTRIBUTED:
-            dist.init_process_group(backend="nccl")
-            torch.cuda.set_device(args.local_rank)
-            device = torch.device(f"cuda:{args.local_rank}")
-        else:
-            device = torch.device("cuda")
-
-        # Checking GPU compatibility
-        gpu_ok = torch.cuda.get_device_capability() in (
-            (7, 0),
-            (8, 0),
-            (9, 0),
-        )
-
-        if not gpu_ok:
-            print(
-                "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected."
+    def parse_arguments(self, description: str):
+        parser = argparse.ArgumentParser(description=description)
+        for field in dataclasses.fields(self):
+            parser.add_argument(
+                f'--{field.name.replace("_", "-")}',
+                type=field.type,
+                default=getattr(self, field.name),
             )
+        args = parser.parse_args()
+        for field in dataclasses.fields(self):
+            if hasattr(args, field.name):
+                setattr(self, field.name, getattr(args, field.name))
+
+
+def main(hyperparams: HyperParams) -> None:
+    ########### DEVICE ############
+
+    # Initialize distributed process group
+    if torch.cuda.is_available() and DISTRIBUTED:
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(hyperparams.local_rank)
+
+    # Determine the device
+    device = torch.device(
+        f"cuda:{hyperparams.local_rank}"
+        if torch.cuda.is_available() and DISTRIBUTED
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
 
     ############ MODEL ############
 
-    num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
+    num_cell_lines = count_directories(
+        os.path.join(hyperparams.data_dir, "cell_lines/")
+    )
 
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -108,10 +101,13 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_cell_lines=num_cell_lines,
         return_augs=True,
         num_downsamples=5,
-    ).to(device)
+    )
+
+    model.to(device)
 
     state_dict = torch.load(
-        os.path.join(data_dir, "pretrained_weights.pth"), map_location=device
+        os.path.join(hyperparams.data_dir, "pretrained_weights.pth"),
+        map_location=device,
     )
     modified_state_dict = {
         key.replace("_orig_mod.module.", ""): value for key, value in state_dict.items()
@@ -130,7 +126,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     if DISTRIBUTED:
         # https://github.com/dougsouza/pytorch-sync-batchnorm-example
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = model.to(device)
+        model.to(device)
         model = DDP(model)
 
     else:
@@ -142,41 +138,21 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ############ DATA ############
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
-        fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"),
+        fasta_file=os.path.join(hyperparams.data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(hyperparams.data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
         context_length=16_384,
     )
 
-    if torch.cuda.is_available():
-        total_size = len(dataset)
-        valid_size = 20_000
-        train_size = total_size - valid_size
+    total_size = len(dataset)
+    valid_size = 20_000
+    train_size = total_size - valid_size
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
 
-        train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
-    else:
-        # Create a subset of 100 samples from the dataset
-        subset_size = 2
-        subset_indices = torch.randperm(len(dataset))[:subset_size].tolist()
-        subset_dataset = torch.utils.data.Subset(dataset, subset_indices)
-        # Divide the subset into training and validation
-        valid_size = 1  # Set your validation size
-        train_size = subset_size - valid_size
-        train_dataset, valid_dataset = random_split(
-            subset_dataset, [train_size, valid_size]
-        )
-
-    assert (
-        train_size > 0
-    ), f"The dataset only contains {total_size} samples, but {valid_size} samples are required for the validation set."
-
-    if torch.cuda.device_count() >= 1:
-        num_workers = 6
-    else:
-        num_workers = 0
+    num_workers = 6 if torch.cuda.device_count() >= 1 else 0
 
     print(f"Using {num_workers} workers")
 
@@ -184,7 +160,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset,
             num_replicas=dist.get_world_size(),
-            rank=args.local_rank,
+            rank=hyperparams.local_rank,
             drop_last=True,
         )
         train_loader = DataLoader(
@@ -253,9 +229,9 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     early_stopping = EarlyStopping(
-        patience=args.early_stopping_patience,
+        patience=hyperparams.early_stopping_patience,
         verbose=True,
-        save_path=f"/opt/ml/model/pretrained_weights.pth",
+        save_path=f"{hyperparams.model_output}/pretrained_weights.pth",
     )
 
     ############ TENSORBOARD ############
@@ -303,45 +279,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train DeepSeq model on SageMaker.")
-    parser.add_argument(
-        "--output-dir", type=str, default=os.environ.get("SM_MODEL_DIR")
-    )
-    parser.add_argument(
-        "--data-dir", type=str, default=os.environ.get("SM_CHANNEL_TRAINING")
-    )
+    hyperparams = HyperParams()
+    hyperparams.parse_arguments("Train DeepSeq model on SageMaker.")
 
-    # Define command line arguments for hyperparameters with default values directly taken from HyperParams class
-    parser.add_argument("--num-epochs", type=int, default=HyperParams.num_epochs)
-    parser.add_argument("--batch-size", type=int, default=HyperParams.batch_size)
-    parser.add_argument(
-        "--learning-rate", type=float, default=HyperParams.learning_rate
-    )
-    parser.add_argument(
-        "--early-stopping-patience",
-        type=int,
-        default=HyperParams.early_stopping_patience,
-    )
-    parser.add_argument(
-        "--focal-loss-alpha", type=float, default=HyperParams.focal_loss_alpha
-    )
-    parser.add_argument(
-        "--focal-loss-gamma", type=float, default=HyperParams.focal_loss_gamma
-    )
-    parser.add_argument(
-        "--local_rank", type=int, default=int(os.environ.get("LOCAL_RANK", 0))
-    )
-
-    args = parser.parse_args()
-
-    # Create hyperparams instance with values from command line arguments
-    hyperparams = HyperParams(
-        num_epochs=args.num_epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        early_stopping_patience=args.early_stopping_patience,
-        focal_loss_alpha=args.focal_loss_alpha,
-        focal_loss_gamma=args.focal_loss_gamma,
-    )
-
-    main(args.output_dir, args.data_dir, hyperparams)
+    main(hyperparams)

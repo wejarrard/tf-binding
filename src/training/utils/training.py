@@ -4,12 +4,28 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from enformer_pytorch import Enformer
+from protocols import ScalerProtocol, SchedulerProtocol
 from torch.cuda.amp.autocast_mode import autocast
-from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
-from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
+
+
+def get_params_without_weight_decay_ln(named_params, weight_decay):
+    no_decay = ["bias", "LayerNorm.weight"]
+    optimizer_grouped_parameters = [
+        {
+            "params": [
+                p for n, p in named_params if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": weight_decay,
+        },
+        {
+            "params": [p for n, p in named_params if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
+    ]
+    return optimizer_grouped_parameters
 
 
 def count_directories(path: str) -> int:
@@ -68,9 +84,11 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
     train_loader: DataLoader,
-    scaler: Optional[GradScaler] = None,
-    scheduler: Optional[LRScheduler] = None,
-) -> Tuple[float, float]:  # Returns both average loss and accuracy
+    scaler: Optional[ScalerProtocol] = None,
+    scheduler: Optional[SchedulerProtocol] = None,
+    max_grad_norm: float = 0.2,
+    log_frequency: int = 5000,
+) -> Tuple[float, float]:
     model.train()
 
     total_loss = 0.0
@@ -94,21 +112,17 @@ def train_one_epoch(
         if scaler and is_distributed:
             with autocast():
                 outputs = model(inputs)
-                assert not torch.isnan(
-                    outputs
-                ).any(), f"NaNs in model outputs {data_inds}"
                 loss = criterion(outputs, targets)
-                assert not torch.isnan(loss).any(), f"NaNs in loss {data_inds}"
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            clip_grad_norm_(model.parameters(), max_norm=0.2)
+            clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             scaler.step(optimizer)
             scaler.update()
         else:
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
-            clip_grad_norm_(model.parameters(), max_norm=0.2)
+            clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
         # Step the optimizer
         optimizer.step()
@@ -133,9 +147,12 @@ def train_one_epoch(
         total_predictions += targets.numel()
 
         if rank == 0:
-            if batch_idx % 5_000 == 0 and batch_idx != 0:
+            if batch_idx % log_frequency == 0 and batch_idx != 0:
                 print(
-                    f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} | LR: {scheduler.get_last_lr()[0]:.8f}"
+                    f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} |"
+                    + f"LR: {scheduler.get_last_lr()[0]:.8f}"
+                    if scheduler
+                    else ""
                 )
 
     average_loss = total_loss / len(train_loader)
@@ -145,11 +162,11 @@ def train_one_epoch(
 
 
 def validate_one_epoch(
-    model,
+    model: nn.Module,
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,
-) -> Tuple[float, float]:  # Returns both average loss and accuracy
+) -> Tuple[float, float]:
     model.eval()
     total_loss = 0.0
     correct_predictions = 0
