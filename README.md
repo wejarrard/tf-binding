@@ -16,7 +16,7 @@ Located in `src/preprocessing/`:
 
 Pretraining is the initial model training phase, conducted on AWS.
 
-### Preprocessing Phase
+### Preprocessing
 
 The preprocessing phase prepares the data for the pretraining stage. For additional steps, contact Thiady for the rest of the preprocessing steps to be applied before these scripts in src/preprocessing.
 
@@ -62,7 +62,8 @@ Steps to run the finetuning script:
 ### Training Customization
 
 - To train a new model on a different TF, change the data source in the script. For example, replace `s3://tf-binding-sites/pretraining/data/AR_ATAC_broadPeak` with your specific TF data file.
-- *Contact Thiady for guidance on generating this file.*
+
+* See Preprocessing for example. Contact Thiady for guidance on generating this file.*
 
 ### Codebase
 
