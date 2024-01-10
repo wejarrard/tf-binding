@@ -1,4 +1,4 @@
-# TF-Binding Project
+# TF Binding Prediction
 
 This project is focused on predicting transcription factor (TF) binding sites using deep learning. It's organized into three main phases: preprocessing, pretraining, and finetuning.
 
@@ -77,7 +77,7 @@ Steps to run the finetuning script:
 - [ ] Add protocols and enhance code readability.
 - [ ] Investigate and resolve issues with LNCAP.
 - [ ] Implement the option to run finetuning without pretrained weights.
-- [ ] Test the model on novel Transcription Factors (TFs).
+- [ ] Test the model on novel Transcription Factors.
 - [ ] Attempt predictions on new cell lines.
 - [ ] Develop a model to predict multiple TFs simultaneously.
 - [ ] Create a Hugging Face space using Gradio for the project.
