@@ -26,7 +26,7 @@ Located in `src/preprocessing/`:
 
 - **Single instance training**: `src/sagemaker/pretrain.ipynb`
 - **Distributed training**: `src/sagemaker/pretrain_distributed.ipynb`
-- 
+
 Steps to run the finetuning script:
 
 1. Navigate to AWS SageMaker in the `us-west-2` region.
