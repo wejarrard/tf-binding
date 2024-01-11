@@ -89,6 +89,7 @@ Steps to run the finetuning script:
 - [ ] Overlap of AR Binding site with STAR-seq data.
   - [ ] Pull down training predictions as well as validation
   - [ ] Compare that to STAR-seq data
+- [ ] Enable spot training in our scripts.
 - [ ] Develop a model to predict multiple TFs simultaneously.
   - [ ] Modify inputs to have both positive and negative columns listing the TFs.
   - [ ] Look into how to solve deep learning problems with incomplete data (freeze weights or loss function?)
