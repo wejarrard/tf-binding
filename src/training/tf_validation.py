@@ -105,7 +105,7 @@ def validate_one_epoch(
                         cell_line[i],
                         label[i],
                         outputs.data[i].item(),
-                        predicted[i].item(),
+                        predicted[i],
                     ]
                 )
 
