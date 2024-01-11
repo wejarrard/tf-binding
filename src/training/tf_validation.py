@@ -2,7 +2,6 @@
 import argparse
 import os
 import warnings
-from ast import Tuple
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -11,12 +10,11 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from data_tf import GenomeIntervalDataset, ValidationGenomeIntervalDataset
-from deepseq import DeepSeq
+from dataloaders.tf import ValidationGenomeIntervalDataset
 from einops.layers.torch import Rearrange
+from models.deepseq import DeepSeq
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
-from training_utils import count_directories
 
 seed_value = 42
 torch.manual_seed(seed_value)

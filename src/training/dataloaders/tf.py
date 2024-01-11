@@ -347,6 +347,83 @@ class TFIntervalDataset(Dataset):
         return len(self.df)
 
 
+class ValidationGenomeIntervalDataset(Dataset):
+    def __init__(
+        self,
+        bed_file,
+        fasta_file,
+        cell_lines_dir,
+        filter_df_fn=identity,
+        chr_bed_to_fasta_map=dict(),
+        context_length=None,
+        return_seq_indices=False,
+        shift_augs=None,
+        rc_aug=False,
+        return_augs=False,
+    ):
+        super().__init__()
+
+        # Initialization for GenomeIntervalDataset
+        bed_path = Path(bed_file)
+        assert bed_path.exists(), "path to .bed file must exist"
+
+        df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
+        df = filter_df_fn(df)
+        self.df = df
+
+        self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
+        self.return_augs = return_augs
+        self.cell_lines_dir = Path(cell_lines_dir)
+
+        self.processor = GenomicInterval(
+            fasta_file=fasta_file,
+            context_length=context_length,
+            return_seq_indices=return_seq_indices,
+            shift_augs=shift_augs,
+            rc_aug=rc_aug,
+        )
+
+    def one_hot_encode_(self, label: str) -> torch.Tensor:
+        """
+        returns 1 or 0 for value, with an extra dimension using einops
+        """
+        return (
+            torch.tensor([1], dtype=torch.float32)
+            if label == "Positive"
+            else torch.tensor([0], dtype=torch.float32)
+        )
+
+    def __getitem__(self, ind):
+        interval = self.df.row(ind)
+        chr_name, start, end, cell_line, label = (
+            interval[0],
+            interval[1],
+            interval[2],
+            interval[3],
+            interval[4],
+        )
+        chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
+
+        label_encoded = self.one_hot_encode_(label)
+
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+
+        return (
+            self.processor(
+                chr_name, start, end, pileup_dir, return_augs=self.return_augs
+            ),
+            label_encoded,
+            chr_name,
+            start,
+            end,
+            cell_line,
+            label,
+        )
+
+    def __len__(self):
+        return len(self.df)
+
+
 class MaskedTFIntervalDataset(TFIntervalDataset):
     def __init__(self, mask_prob=0.15, *args, **kwargs):
         super(MaskedTFIntervalDataset, self).__init__(*args, **kwargs)

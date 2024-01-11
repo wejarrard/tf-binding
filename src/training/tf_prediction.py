@@ -3,7 +3,7 @@ import argparse
 import dataclasses
 import os
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pysam
 import torch
@@ -13,7 +13,6 @@ import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from models.deepseq import DeepSeq
-from pyexpat import model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
