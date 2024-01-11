@@ -49,8 +49,10 @@ class HyperParams:
     batch_size: int = 8 if torch.cuda.is_available() else 1
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
-    focal_loss_alpha: float = 1
-    focal_loss_gamma: float = 2
+    max_grad_norm: float = 0.2
+    log_frequency: int = 5_000
+    # focal_loss_alpha: float = 1
+    # focal_loss_gamma: float = 2
 
     model_output: str = "/opt/ml/model"
     data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "")
@@ -151,7 +153,8 @@ def main(hyperparams: HyperParams) -> None:
 
     num_workers = 6 if torch.cuda.device_count() >= 1 else 0
 
-    print(f"Using {num_workers} workers")
+    if hyperparams.local_rank == 0:
+        print(f"Using {num_workers} workers")
 
     if DISTRIBUTED:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -231,14 +234,12 @@ def main(hyperparams: HyperParams) -> None:
         save_path=f"{hyperparams.model_output}/pretrained_weights.pth",
     )
 
-    ############ TENSORBOARD ############
+    ############ TENSORBOARD ############ TODO: Add in Tensorboard support
 
     writer = SummaryWriter(
         log_dir="/opt/ml/output/tensorboard" if torch.cuda.is_available() else "output"
     )
     ############ TRAINING ############
-
-    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for epoch in range(hyperparams.num_epochs):
         if DISTRIBUTED:
@@ -252,8 +253,10 @@ def main(hyperparams: HyperParams) -> None:
             device=device,
             scheduler=scheduler,
             train_loader=train_loader,
+            max_grad_norm=hyperparams.max_grad_norm,
+            log_frequency=hyperparams.log_frequency,
         )
-        if rank == 0:
+        if hyperparams.local_rank == 0:
             if torch.isnan(torch.tensor(train_loss)):
                 if DISTRIBUTED:
                     torch.distributed.destroy_process_group()
@@ -265,7 +268,7 @@ def main(hyperparams: HyperParams) -> None:
             criterion=criterion,
             device=device,
         )
-        if rank == 0:
+        if hyperparams.local_rank == 0:
             print(
                 f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss:.4f} | Val acc: {val_acc:.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
             )
