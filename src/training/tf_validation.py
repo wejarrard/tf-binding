@@ -5,6 +5,7 @@ import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 
+import polars as pl
 import pysam
 import torch
 import torch._dynamo
@@ -45,12 +46,14 @@ def validate_one_epoch(
     correct_predictions = 0
     total_predictions = 0
 
-    # Dictionaries to track accuracies and misclassifications
     cell_line_accuracy = defaultdict(lambda: {"correct": 0, "total": 0})
     chromosome_accuracy = defaultdict(lambda: {"correct": 0, "total": 0})
     misclassifications = {"positive_as_negative": 0, "negative_as_positive": 0}
 
     is_distributed = torch.distributed.is_initialized()
+
+    # List to hold data for the dataframe
+    dataframe_list = []
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
@@ -79,27 +82,36 @@ def validate_one_epoch(
             predicted = (outputs.data > 0.5).float()
             correct = predicted == targets
 
-            # Update general accuracy
             correct_predictions += correct.sum().item()
             total_predictions += targets.numel()
 
-            # Update cell line and chromosome accuracies
             for i in range(len(correct)):
                 cell_line_accuracy[cell_line[i]]["correct"] += correct[i].item()
                 cell_line_accuracy[cell_line[i]]["total"] += 1
                 chromosome_accuracy[chr_name[i]]["correct"] += correct[i].item()
                 chromosome_accuracy[chr_name[i]]["total"] += 1
 
-                # Update misclassifications
                 if label[i] == 1 and predicted[i] == 0:
                     misclassifications["positive_as_negative"] += 1
                 elif label[i] == 0 and predicted[i] == 1:
                     misclassifications["negative_as_positive"] += 1
 
+                # Append data to the list for the dataframe
+                dataframe_list.append(
+                    [
+                        chr_name[i],
+                        start[i],
+                        end[i],
+                        cell_line[i],
+                        label[i].item(),
+                        outputs.data[i].item(),
+                        predicted[i].item(),
+                    ]
+                )
+
     average_loss = total_loss / len(val_loader)
     accuracy = correct_predictions / total_predictions * 100
 
-    # Calculate accuracies for each cell line and chromosome
     for key in cell_line_accuracy:
         cell_line_accuracy[key] = (
             cell_line_accuracy[key]["correct"] / cell_line_accuracy[key]["total"]
@@ -109,12 +121,27 @@ def validate_one_epoch(
             chromosome_accuracy[key]["correct"] / chromosome_accuracy[key]["total"]
         ) * 100
 
+    # Create a Polars DataFrame
+    df = pl.DataFrame(
+        dataframe_list,
+        schema=[
+            "chr_name",
+            "start",
+            "end",
+            "cell_line",
+            "label",
+            "outputs_data",
+            "predicted",
+        ],
+    )
+
     return (
         average_loss,
         accuracy,
         cell_line_accuracy,
         chromosome_accuracy,
         misclassifications,
+        df,
     )
 
 
@@ -279,12 +306,21 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         cell_line_accuracy,
         chromosome_accuracy,
         misclassifications,
+        df,
     ) = validate_one_epoch(
         model=model,
         val_loader=valid_loader,
         criterion=criterion,
         device=device,
     )
+
+    print(f"Validation Loss: {average_loss:.6f} | Accuracy: {accuracy:.2f}%")
+    print(f"Cell Line Accuracy: {cell_line_accuracy}")
+    print(f"Chromosome Accuracy: {chromosome_accuracy}")
+    print(f"Misclassifications: {misclassifications}")
+
+    # Save the dataframe to a csv file
+    df.write_csv(f"/opt/ml/output", separator="\t", has_header=False)
 
 
 if __name__ == "__main__":
