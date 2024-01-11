@@ -232,11 +232,11 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
-    total_size = len(dataset)
-    valid_size = 20_000
-    train_size = total_size - valid_size
+    # total_size = len(dataset)
+    # valid_size = 20_000
+    # train_size = total_size - valid_size
 
-    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+    # train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
 
     if torch.cuda.device_count() >= 1:
         num_workers = 6
@@ -247,14 +247,14 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     if DISTRIBUTED:
         valid_sampler = torch.utils.data.distributed.DistributedSampler(
-            valid_dataset,
+            dataset,
             num_replicas=dist.get_world_size(),
             rank=dist.get_rank(),
             shuffle=False,
             drop_last=True,
         )
         valid_loader = DataLoader(
-            valid_dataset,
+            dataset,
             batch_size=hyperparams.batch_size,
             sampler=valid_sampler,
             num_workers=num_workers,
@@ -263,7 +263,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         )
     else:
         valid_loader = DataLoader(
-            valid_dataset,
+            dataset,
             batch_size=hyperparams.batch_size,
             shuffle=False,
             num_workers=num_workers,
