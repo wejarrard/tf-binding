@@ -92,10 +92,12 @@ Steps to run the finetuning script:
 - [ ] Enable spot training in our scripts.
 - [ ] Develop a model to predict multiple TFs simultaneously.
   - [ ] Modify inputs to have both positive and negative columns listing the TFs.
+    - [ ] Make this file easy to generate. Take in multiple Bed files and merge.
   - [ ] Look into how to solve deep learning problems with incomplete data (freeze weights or loss function?)
 - [ ] Investigate and resolve issues with LNCAP.
 - [ ] Implement the option to run finetuning without pretrained weights.
 - [ ] Test the model on novel Transcription Factors.
 - [ ] Attempt predictions on new cell lines.
 - [ ] Naming convention for cell lines.
+- [ ] Make pathing to s3 more intuitive and less hardcoded.
 - [ ] Create a Hugging Face space using Gradio for the project.
