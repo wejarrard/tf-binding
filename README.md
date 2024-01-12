@@ -87,7 +87,7 @@ Steps to run the finetuning script:
 - [x] Add protocols and enhance code readability.
 - [x] Write detailed README for the pretraining phase.
 - [ ] Overlap of AR Binding site with STAR-seq data.
-  - [ ] Pull down training predictions as well as validation
+  - [x] Pull down training predictions as well as validation
   - [ ] Compare that to STAR-seq data
 - [ ] Enable spot training in our scripts.
 - [ ] Develop a model to predict multiple TFs simultaneously.
