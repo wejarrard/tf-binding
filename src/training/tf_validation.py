@@ -1,4 +1,5 @@
 # pretrain.py
+# pretrain.py
 import argparse
 import os
 import warnings
@@ -37,23 +38,21 @@ else:
     # Use the number of GPUs as a fallback
     DISTRIBUTED = torch.cuda.device_count() > 1
 
-
-def validate_one_epoch(
-    model, criterion: nn.Module, device: torch.device, val_loader: DataLoader
-):
+def validate_one_epoch(model, criterion: nn.Module, device: torch.device, val_loader: DataLoader):
     model.eval()
     total_loss = 0.0
     correct_predictions = 0
     total_predictions = 0
 
+    # Additional list to store data for BED file
+    bed_file_data = []
+
+    # Dictionaries to track accuracies and misclassifications
     cell_line_accuracy = defaultdict(lambda: {"correct": 0, "total": 0})
     chromosome_accuracy = defaultdict(lambda: {"correct": 0, "total": 0})
     misclassifications = {"positive_as_negative": 0, "negative_as_positive": 0}
 
     is_distributed = torch.distributed.is_initialized()
-
-    # List to hold data for the dataframe
-    dataframe_list = []
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
@@ -78,71 +77,69 @@ def validate_one_epoch(
                 loss_val = loss.item()
 
             total_loss += loss_val
+            
+            output_data = outputs.data.cpu().numpy().flatten()
+            for i in range(len(chr_name)):
+                bed_entry = (
+                    chr_name[i],
+                    str(start[i]),
+                    str(end[i]),
+                    cell_line[i],
+                    str(label[i]),
+                    str(output_data[i])
+                )
+                bed_file_data.append(bed_entry)
 
             predicted = (outputs.data > 0.5).float()
             correct = predicted == targets
 
+            # Update general accuracy
             correct_predictions += correct.sum().item()
             total_predictions += targets.numel()
 
+            # Update cell line and chromosome accuracies
             for i in range(len(correct)):
                 cell_line_accuracy[cell_line[i]]["correct"] += correct[i].item()
                 cell_line_accuracy[cell_line[i]]["total"] += 1
                 chromosome_accuracy[chr_name[i]]["correct"] += correct[i].item()
                 chromosome_accuracy[chr_name[i]]["total"] += 1
 
+                # Update misclassifications
                 if label[i] == 1 and predicted[i] == 0:
                     misclassifications["positive_as_negative"] += 1
                 elif label[i] == 0 and predicted[i] == 1:
                     misclassifications["negative_as_positive"] += 1
 
-                # Append data to the list for the dataframe
-                dataframe_list.append(
-                    [
-                        chr_name[i],
-                        start[i],
-                        end[i],
-                        cell_line[i],
-                        label[i],
-                        outputs.data[i].item(),
-                        predicted[i],
-                    ]
-                )
-
     average_loss = total_loss / len(val_loader)
     accuracy = correct_predictions / total_predictions * 100
 
+    
+    # Write the data to a BED file
+    bed_file_path = "/opt/ml/model/validation_results.bed"
+    with open(bed_file_path, "w") as bed_file:
+        for entry in bed_file_data:
+            bed_file.write("\t".join(entry) + "\n")
+    # Calculate accuracies and fractions for each cell line and chromosome
+    cell_line_acc_str = {}
+    chromosome_acc_str = {}
     for key in cell_line_accuracy:
-        cell_line_accuracy[key] = (
-            cell_line_accuracy[key]["correct"] / cell_line_accuracy[key]["total"]
-        ) * 100
-    for key in chromosome_accuracy:
-        chromosome_accuracy[key] = (
-            chromosome_accuracy[key]["correct"] / chromosome_accuracy[key]["total"]
-        ) * 100
+        fraction = f"{cell_line_accuracy[key]['correct']} / {cell_line_accuracy[key]['total']}"
+        percentage = (cell_line_accuracy[key]['correct'] / cell_line_accuracy[key]['total']) * 100
+        cell_line_acc_str[key] = {"fraction": fraction, "percentage": percentage}
 
-    # Create a Polars DataFrame
-    df = pl.DataFrame(
-        dataframe_list,
-        schema=[
-            "chr_name",
-            "start",
-            "end",
-            "cell_line",
-            "label",
-            "outputs_data",
-            "predicted",
-        ],
-    )
+    for key in chromosome_accuracy:
+        fraction = f"{chromosome_accuracy[key]['correct']} / {chromosome_accuracy[key]['total']}"
+        percentage = (chromosome_accuracy[key]['correct'] / chromosome_accuracy[key]['total']) * 100
+        chromosome_acc_str[key] = {"fraction": fraction, "percentage": percentage}
 
     return (
         average_loss,
         accuracy,
-        cell_line_accuracy,
-        chromosome_accuracy,
+        cell_line_acc_str,
+        chromosome_acc_str,
         misclassifications,
-        df,
     )
+
 
 
 ############ HYPERPARAMETERS ############
@@ -222,14 +219,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     }
     model.load_state_dict(modified_state_dict)
 
-    model.out = nn.Sequential(
-        # PrintShape(name="Head In"),
-        nn.Linear(model.dim * 2, 1),
-        # PrintShape(name="Linear"),
-        Rearrange("... () -> ..."),
-        nn.Linear(512, 1),
-    )
-
     for param in model.parameters():
         param.requires_grad = True
 
@@ -257,11 +246,11 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
-    # total_size = len(dataset)
-    # valid_size = 20_000
-    # train_size = total_size - valid_size
+#     total_size = len(dataset)
+#     valid_size = 20_000
+#     train_size = total_size - valid_size
 
-    # train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+#     train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
 
     if torch.cuda.device_count() >= 1:
         num_workers = 6
@@ -298,6 +287,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ Validation ############
 
+
     criterion = nn.BCEWithLogitsLoss()
 
     (
@@ -306,7 +296,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         cell_line_accuracy,
         chromosome_accuracy,
         misclassifications,
-        df,
     ) = validate_one_epoch(
         model=model,
         val_loader=valid_loader,
@@ -314,13 +303,29 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         device=device,
     )
 
-    print(f"Validation Loss: {average_loss:.6f} | Accuracy: {accuracy:.2f}%")
-    print(f"Cell Line Accuracy: {cell_line_accuracy}")
-    print(f"Chromosome Accuracy: {chromosome_accuracy}")
-    print(f"Misclassifications: {misclassifications}")
+    # Assuming the function call you provided has been executed and the results are stored in the respective variables
+    print(f"Validation Results:\n")
 
-    # Save the dataframe to a csv file
-    df.write_csv(f"/opt/ml/output", separator="\t", has_header=False)
+    print(f"Average Loss: {average_loss:.4f}")
+    print(f"Overall Accuracy: {accuracy:.2f}%\n")
+
+    print("Accuracy by Cell Line:")
+    for cell_line, acc in cell_line_accuracy.items():
+        print(f"  - {cell_line}: {acc}%")
+
+    print("\nAccuracy by Chromosome:")
+    for chromosome, acc in chromosome_accuracy.items():
+        print(f"  - {chromosome}: {acc}%")
+
+    print("\nMisclassifications:")
+    print(
+        f"  - Positive labels misclassified as Negative: {misclassifications['positive_as_negative']}"
+    )
+    print(
+        f"  - Negative labels misclassified as Positive: {misclassifications['negative_as_positive']}"
+    )
+
+
 
 
 if __name__ == "__main__":
