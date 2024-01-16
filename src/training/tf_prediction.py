@@ -13,10 +13,13 @@ import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from models.deepseq import DeepSeq
+from sympy import hyper
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils import checkpoint
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
+from utils.checkpointing import load_checkpoint, save_checkpoint
 from utils.earlystopping import EarlyStopping
 from utils.training import (
     count_directories,
@@ -53,7 +56,8 @@ class HyperParams:
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
-    model_output: str = "/opt/ml/model"
+    checkpoint_path: str = "/opt/ml/checkpoints"
+    model_output_path: str = "/opt/ml/model"
     data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
@@ -230,8 +234,15 @@ def main(hyperparams: HyperParams) -> None:
     early_stopping = EarlyStopping(
         patience=hyperparams.early_stopping_patience,
         verbose=True,
-        save_path=f"{hyperparams.model_output}/pretrained_weights.pth",
+        save_path=f"{hyperparams.model_output_path}/best_model.pth",
     )
+
+    if not os.path.isfile(hyperparams.checkpoint_path + "/checkpoint.pth"):
+        epoch_number = 0
+    else:
+        model, optimizer, scheduler, epoch_number, early_stopping = load_checkpoint(
+            model, optimizer, scheduler, early_stopping, hyperparams
+        )
 
     ############ TENSORBOARD ############ TODO: Add in Tensorboard support
 
@@ -240,7 +251,7 @@ def main(hyperparams: HyperParams) -> None:
     )
     ############ TRAINING ############
 
-    for epoch in range(hyperparams.num_epochs):
+    for epoch in range(epoch_number, hyperparams.num_epochs):
         if DISTRIBUTED:
             train_sampler.set_epoch(epoch)
             valid_sampler.set_epoch(epoch)
@@ -271,10 +282,15 @@ def main(hyperparams: HyperParams) -> None:
             print(
                 f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss:.4f} | Val acc: {val_acc:.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
             )
+
             if early_stopping(val_loss, model):
                 if DISTRIBUTED:
                     torch.distributed.destroy_process_group()
                 break
+
+            save_checkpoint(
+                model, optimizer, scheduler, early_stopping, epoch, hyperparams
+            )
 
 
 if __name__ == "__main__":
