@@ -4,11 +4,11 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from enformer_pytorch import Enformer
-from protocols import ScalerProtocol, SchedulerProtocol
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
+from utils.protocols import ScalerProtocol, SchedulerProtocol
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
