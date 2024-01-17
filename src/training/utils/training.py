@@ -1,4 +1,5 @@
 import os
+from tabnanny import check
 from typing import Optional, Tuple
 
 import torch
@@ -8,8 +9,8 @@ from torch.cuda.amp.autocast_mode import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
-from utils.protocols import ScalerProtocol, SchedulerProtocol
 from utils.checkpointing import save_checkpoint
+from utils.protocols import ScalerProtocol, SchedulerProtocol
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
@@ -93,6 +94,7 @@ def train_one_epoch(
     current_batch: int = 0,
     max_grad_norm: float = 0.2,
     log_frequency: int = 5000,
+    checkpointing=True,
 ) -> Tuple[float, float]:
     model.train()
 
@@ -161,15 +163,16 @@ def train_one_epoch(
                     if scheduler
                     else ""
                 )
-                save_checkpoint(
-                    model,
-                    optimizer,
-                    scheduler,
-                    early_stopping,
-                    epoch,
-                    hyperparams,
-                    batch_idx,
-                )
+                if checkpointing:
+                    save_checkpoint(
+                        model,
+                        optimizer,
+                        scheduler,
+                        early_stopping,
+                        epoch,
+                        hyperparams,
+                        batch_idx,
+                    )
 
     average_loss = total_loss / len(train_loader)
     accuracy = correct_predictions / total_predictions * 100
