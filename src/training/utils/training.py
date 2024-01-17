@@ -9,8 +9,7 @@ from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
 from utils.protocols import ScalerProtocol, SchedulerProtocol
-
-from training.utils.checkpointing import save_checkpoint
+from utils.checkpointing import save_checkpoint
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
