@@ -13,6 +13,7 @@ import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from models.deepseq import DeepSeq
+from numpy import save
 from sympy import hyper
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils import checkpoint
@@ -239,10 +240,16 @@ def main(hyperparams: HyperParams) -> None:
 
     if not os.path.isfile(hyperparams.checkpoint_path + "/checkpoint.pth"):
         epoch_number = 0
+        current_batch = 0
     else:
-        model, optimizer, scheduler, epoch_number, early_stopping = load_checkpoint(
-            model, optimizer, scheduler, early_stopping, hyperparams
-        )
+        (
+            model,
+            optimizer,
+            scheduler,
+            epoch_number,
+            early_stopping,
+            current_batch,
+        ) = load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams)
 
     ############ TENSORBOARD ############ TODO: Add in Tensorboard support
 
@@ -265,6 +272,10 @@ def main(hyperparams: HyperParams) -> None:
             train_loader=train_loader,
             max_grad_norm=hyperparams.max_grad_norm,
             log_frequency=hyperparams.log_frequency,
+            current_batch=current_batch,
+            epoch=epoch,
+            hyperparams=hyperparams,
+            early_stopping=early_stopping,
         )
         if hyperparams.local_rank == 0:
             if torch.isnan(torch.tensor(train_loss)):
@@ -289,7 +300,13 @@ def main(hyperparams: HyperParams) -> None:
                 break
 
             save_checkpoint(
-                model, optimizer, scheduler, early_stopping, epoch, hyperparams
+                model,
+                optimizer,
+                scheduler,
+                early_stopping,
+                epoch + 1,
+                hyperparams,
+                save_best_model=True,
             )
 
 

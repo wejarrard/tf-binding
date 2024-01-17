@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
 from utils.protocols import ScalerProtocol, SchedulerProtocol
 
+from training.utils.checkpointing import save_checkpoint
+
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
     no_decay = ["bias", "LayerNorm.weight"]
@@ -84,8 +86,12 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
     train_loader: DataLoader,
+    epoch: int,
+    hyperparams,
+    early_stopping,
     scaler: Optional[ScalerProtocol] = None,
     scheduler: Optional[SchedulerProtocol] = None,
+    current_batch: int = 0,
     max_grad_norm: float = 0.2,
     log_frequency: int = 5000,
 ) -> Tuple[float, float]:
@@ -100,6 +106,8 @@ def train_one_epoch(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for batch_idx, batch in enumerate(train_loader):
+        if batch_idx < current_batch:
+            continue
         inputs, targets, data_inds = batch[0], batch[1], batch[2]
         assert not torch.isnan(inputs).any(), f"NaNs in inputs {data_inds}"
         assert not torch.isnan(targets).any(), f"NaNs in targets {data_inds}"
@@ -153,6 +161,15 @@ def train_one_epoch(
                     + f"LR: {scheduler.get_last_lr()[0]:.8f}"
                     if scheduler
                     else ""
+                )
+                save_checkpoint(
+                    model,
+                    optimizer,
+                    scheduler,
+                    early_stopping,
+                    epoch,
+                    hyperparams,
+                    batch_idx,
                 )
 
     average_loss = total_loss / len(train_loader)
