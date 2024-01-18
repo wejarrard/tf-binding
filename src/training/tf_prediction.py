@@ -57,7 +57,7 @@ class HyperParams:
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
-    checkpoint_path: str = os.environ.get("SM_OUTPUT_INTERMEDIATE_DIR", "/opt/ml/output/intermediate")
+    checkpoint_path: str = "/opt/ml/checkpoints"
     model_output_path: str = "/opt/ml/model"
     data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
