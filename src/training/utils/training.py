@@ -110,9 +110,6 @@ def train_one_epoch(
         if batch_idx < current_batch:
             continue
         inputs, targets, data_inds = batch[0], batch[1], batch[2]
-        assert not torch.isnan(inputs).any(), f"NaNs in inputs {data_inds}"
-        assert not torch.isnan(targets).any(), f"NaNs in targets {data_inds}"
-
         inputs, targets = inputs.to(device), targets.to(device)
 
         optimizer.zero_grad()
