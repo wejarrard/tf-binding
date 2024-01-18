@@ -100,4 +100,5 @@ Steps to run the finetuning script:
 - [ ] Attempt predictions on new cell lines.
 - [ ] Naming convention for cell lines.
 - [ ] Make pathing to s3 more intuitive and less hardcoded.
+- [ ] Use accelerate instead of torch distributed?
 - [ ] Create a Hugging Face space using Gradio for the project.
