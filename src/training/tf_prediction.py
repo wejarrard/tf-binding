@@ -53,7 +53,7 @@ class HyperParams:
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
     max_grad_norm: float = 0.2
-    log_frequency: int = 5_000
+    log_frequency: int = 1_000
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
@@ -241,6 +241,7 @@ def main(hyperparams: HyperParams) -> None:
     if not os.path.isfile(hyperparams.checkpoint_path + "/checkpoint.pth"):
         epoch_number = 0
         current_batch = 0
+        total_loss = None
     else:
         (
             model,
@@ -249,6 +250,7 @@ def main(hyperparams: HyperParams) -> None:
             epoch_number,
             early_stopping,
             current_batch,
+            total_loss,
         ) = load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams)
 
     ############ TENSORBOARD ############ TODO: Add in Tensorboard support
@@ -276,6 +278,7 @@ def main(hyperparams: HyperParams) -> None:
             epoch=epoch,
             hyperparams=hyperparams,
             early_stopping=early_stopping,
+            total_loss=total_loss,
         )
         if hyperparams.local_rank == 0:
             if torch.isnan(torch.tensor(train_loss)):

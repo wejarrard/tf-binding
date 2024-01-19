@@ -237,7 +237,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ############ DATA ############
 
     dataset = ValidationGenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
+        bed_file=os.path.join(data_dir, "AR_ATAC_all_broadPeak"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,

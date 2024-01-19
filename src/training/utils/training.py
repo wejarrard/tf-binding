@@ -93,12 +93,14 @@ def train_one_epoch(
     scheduler: Optional[SchedulerProtocol] = None,
     current_batch: int = 0,
     max_grad_norm: float = 0.2,
-    log_frequency: int = 5000,
+    log_frequency: int = 1000,
     checkpointing=True,
+    total_loss=None,
 ) -> Tuple[float, float]:
     model.train()
 
-    total_loss = 0.0
+    if not total_loss:
+        total_loss = 0.0
     correct_predictions = 0
     total_predictions = 0
 
@@ -169,6 +171,7 @@ def train_one_epoch(
                         epoch,
                         hyperparams,
                         batch_idx,
+                        total_loss,
                     )
 
     average_loss = total_loss / len(train_loader)
