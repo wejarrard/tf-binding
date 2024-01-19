@@ -242,6 +242,8 @@ def main(hyperparams: HyperParams) -> None:
         epoch_number = 0
         current_batch = 0
         total_loss = None
+        correct_predictions = None
+        total_predictions = None
     else:
         (
             model,
@@ -251,6 +253,8 @@ def main(hyperparams: HyperParams) -> None:
             early_stopping,
             current_batch,
             total_loss,
+            correct_predictions,
+            total_predictions,
         ) = load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams)
 
     ############ TENSORBOARD ############ TODO: Add in Tensorboard support
@@ -279,6 +283,8 @@ def main(hyperparams: HyperParams) -> None:
             hyperparams=hyperparams,
             early_stopping=early_stopping,
             total_loss=total_loss,
+            correct_predictions=correct_predictions,
+            total_predictions=total_predictions,
         )
         if hyperparams.local_rank == 0:
             if torch.isnan(torch.tensor(train_loss)):
@@ -292,6 +298,7 @@ def main(hyperparams: HyperParams) -> None:
             criterion=criterion,
             device=device,
         )
+
         if hyperparams.local_rank == 0:
             print(
                 f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss:.4f} | Val acc: {val_acc:.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
@@ -301,6 +308,8 @@ def main(hyperparams: HyperParams) -> None:
                 if DISTRIBUTED:
                     torch.distributed.destroy_process_group()
                 break
+
+            total_loss, correct_predictions, total_predictions = None, None, None
 
             save_checkpoint(
                 model,

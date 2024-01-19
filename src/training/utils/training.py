@@ -96,13 +96,17 @@ def train_one_epoch(
     log_frequency: int = 1000,
     checkpointing=True,
     total_loss=None,
+    correct_predictions=None,
+    total_predictions=None,
 ) -> Tuple[float, float]:
     model.train()
 
     if not total_loss:
         total_loss = 0.0
-    correct_predictions = 0
-    total_predictions = 0
+    if not correct_predictions:
+        correct_predictions = 0
+    if not total_predictions:
+        total_predictions = 0
 
     # Check if distributed training is initialized
     is_distributed = torch.distributed.is_initialized()
@@ -172,6 +176,8 @@ def train_one_epoch(
                         hyperparams,
                         batch_idx,
                         total_loss,
+                        correct_predictions,
+                        total_predictions,
                     )
 
     average_loss = total_loss / len(train_loader)

@@ -1,8 +1,8 @@
 import os
 import shutil
 
-import torch
 import numpy as np
+import torch
 
 
 def save_checkpoint(
@@ -12,7 +12,9 @@ def save_checkpoint(
     early_stopping,
     epoch,
     hyperparams,
-    total_loss = np.inf,
+    total_loss=None,
+    correct_predictions=None,
+    total_predictions=None,
     current_batch=0,
     save_best_model=False,
 ):
@@ -28,6 +30,8 @@ def save_checkpoint(
             "scheduler_state_dict": scheduler.state_dict(),
             "early_stopping_state": early_stopping.state_dict(),
             "total_loss": total_loss,
+            "correct_predictions": correct_predictions,
+            "total_predictions": total_predictions,
         },
         checkpointing_path,
     )
@@ -53,7 +57,8 @@ def load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams):
     current_batch = checkpoint.get("current_batch", 0)
     epoch_number = checkpoint["epoch"]
     total_loss = checkpoint["total_loss"]
-    
+    correct_predictions = checkpoint["correct_predictions"]
+    total_predictions = checkpoint["total_predictions"]
 
     if os.path.exists(f"{hyperparams.checkpoint_path}/best_model.pth"):
         source_best_model_path = f"{hyperparams.checkpoint_path}/best_model.pth"
@@ -65,4 +70,14 @@ def load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams):
     print("Resuming training from epoch: {}".format(epoch_number + 1))
     print("--------------------------------------------")
 
-    return model, optimizer, scheduler, epoch_number, early_stopping, current_batch, total_loss
+    return (
+        model,
+        optimizer,
+        scheduler,
+        epoch_number,
+        early_stopping,
+        current_batch,
+        total_loss,
+        correct_predictions,
+        total_predictions,
+    )
