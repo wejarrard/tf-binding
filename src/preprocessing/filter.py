@@ -73,8 +73,8 @@ def count_peaks_over_window_size(path, window_size=16384):
 
 
 if __name__ == "__main__":
-    df_filtered = count_peaks_over_window_size("../../AR_ATAC_broadPeak")
-    df_filtered.write_csv("./AR_ATAC_broadPeak", separator="\t", has_header=False)
+    df_filtered = count_peaks_over_window_size("./AR_ATAC_all_broadPeak")
+    df_filtered.write_csv("./AR_ATAC_all_broadPeak", separator="\t", has_header=False)
 
     # negative = read_peak_file("data/negative.bed")
 
