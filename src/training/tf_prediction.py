@@ -244,6 +244,7 @@ def main(hyperparams: HyperParams) -> None:
         total_loss = None
         correct_predictions = None
         total_predictions = None
+        
     else:
         (
             model,

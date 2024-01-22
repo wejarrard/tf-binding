@@ -18,7 +18,6 @@ def save_checkpoint(
     current_batch=0,
     save_best_model=False,
 ):
-    print(f"Epoch: {epoch}")
     checkpointing_path = hyperparams.checkpoint_path + "/checkpoint.pth"
     print(f"Saving the Checkpoint: {checkpointing_path}")
     torch.save(
@@ -56,9 +55,9 @@ def load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams):
 
     current_batch = checkpoint.get("current_batch", 0)
     epoch_number = checkpoint["epoch"]
-    total_loss = checkpoint["total_loss"]
-    correct_predictions = checkpoint["correct_predictions"]
-    total_predictions = checkpoint["total_predictions"]
+    total_loss = checkpoint.get("total_loss", None)
+    correct_predictions = checkpoint.get("correct_predictions", None)
+    total_predictions = checkpoint.get("total_predictions", None) 
 
     if os.path.exists(f"{hyperparams.checkpoint_path}/best_model.pth"):
         source_best_model_path = f"{hyperparams.checkpoint_path}/best_model.pth"

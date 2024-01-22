@@ -168,17 +168,17 @@ def train_one_epoch(
                 )
                 if checkpointing:
                     save_checkpoint(
-                        model,
-                        optimizer,
-                        scheduler,
-                        early_stopping,
-                        epoch,
-                        hyperparams,
-                        batch_idx,
-                        total_loss,
-                        correct_predictions,
-                        total_predictions,
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        early_stopping=early_stopping,
+                        epoch=epoch,
+                        hyperparams=hyperparams,
+                        total_loss=total_loss,
+                        correct_predictions=correct_predictions,
+                        total_predictions=total_predictions,
                     )
+                    
 
     average_loss = total_loss / len(train_loader)
     accuracy = correct_predictions / total_predictions * 100
