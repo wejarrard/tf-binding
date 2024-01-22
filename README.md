@@ -94,8 +94,7 @@ Steps to run the finetuning script:
   - [ ] Modify inputs to have both positive and negative columns listing the TFs.
     - [ ] Make this file easy to generate. Take in multiple Bed files and merge.
   - [ ] Look into how to solve deep learning problems with incomplete data (freeze weights or loss function?)
-- [ ] Investigate and resolve issues with LNCAP.
-- [ ] Implement the option to run finetuning without pretrained weights.
+- ⏳ Investigate and resolve issues with LNCAP.
 - [ ] Test the model on novel Transcription Factors.
 - [ ] Attempt predictions on new cell lines.
 - [ ] Naming convention for cell lines.

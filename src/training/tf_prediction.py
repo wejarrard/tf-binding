@@ -3,6 +3,7 @@ import argparse
 import dataclasses
 import os
 import warnings
+from collections import Counter
 from dataclasses import dataclass
 
 import pysam
@@ -22,6 +23,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 from utils.checkpointing import load_checkpoint, save_checkpoint
 from utils.earlystopping import EarlyStopping
+from utils.loss import FocalLoss
 from utils.training import (
     count_directories,
     get_params_without_weight_decay_ln,
@@ -150,6 +152,20 @@ def main(hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
+    class_counts = Counter()
+    for _, target, _ in dataset:
+        class_counts[target] += 1
+
+    # Calculate weights
+    num_samples = len(dataset)
+    weights = {
+        class_id: num_samples / count for class_id, count in class_counts.items()
+    }
+
+    # Weights for each class
+    weight_for_class_0 = weights[0]
+    weight_for_class_1 = weights[1]
+
     total_size = len(dataset)
     valid_size = 20_000
     train_size = total_size - valid_size
@@ -216,7 +232,14 @@ def main(hyperparams: HyperParams) -> None:
         model.named_parameters(), weight_decay=0.1
     )
 
-    criterion = nn.BCEWithLogitsLoss()
+    # Assuming class_counts and num_samples are already computed as before
+    weights = torch.tensor(
+        [num_samples / class_counts[0], num_samples / class_counts[1]],
+        dtype=torch.float,
+    )
+
+    # Instantiate FocalLoss with the class weights
+    criterion = FocalLoss(weight=weights)
     optimizer = torch.optim.AdamW(
         param_groups,
         lr=hyperparams.learning_rate,
@@ -244,7 +267,7 @@ def main(hyperparams: HyperParams) -> None:
         total_loss = None
         correct_predictions = None
         total_predictions = None
-        
+
     else:
         (
             model,
