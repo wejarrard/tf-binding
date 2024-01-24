@@ -5,6 +5,7 @@ import os
 import warnings
 from collections import Counter
 from dataclasses import dataclass
+import random
 
 import pysam
 import torch
@@ -152,15 +153,19 @@ def main(hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
+    # Assuming dataset is a list or similar iterable
+    sample_size = 100000
+    sampled_dataset = random.sample(list(dataset), sample_size)
+    if hyperparams.local_rank == 0:
+        print("calculating weights...")
+
+
     class_counts = Counter()
-    for _, target, _ in dataset:
+    for _, target, _ in sampled_dataset:  # Adjust this line based on the structure of your dataset
         class_counts[target] += 1
 
-    # Calculate weights
-    num_samples = len(dataset)
-    weights = {
-        class_id: num_samples / count for class_id, count in class_counts.items()
-    }
+    # Estimate weights based on the sampled dataset
+    weights = {class_id: sample_size / count for class_id, count in class_counts.items()}
 
     # Weights for each class
     weight_for_class_0 = weights[0]
