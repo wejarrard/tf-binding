@@ -100,5 +100,5 @@ Steps to run the finetuning script:
 - [ ] Naming convention for cell lines.
 - [ ] Make pathing to s3 more intuitive and less hardcoded.
 - [ ] Use accelerate instead of torch distributed?
-- [ ] implement sagemaker local mode for easier debugging.
+- ⏳ implement sagemaker local mode for easier debugging.
 - [ ] Create a Hugging Face space using Gradio for the project.

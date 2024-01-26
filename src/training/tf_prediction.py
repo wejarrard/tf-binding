@@ -5,7 +5,6 @@ import os
 import warnings
 from collections import Counter
 from dataclasses import dataclass
-import random
 
 import pysam
 import torch
@@ -15,13 +14,11 @@ import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from models.deepseq import DeepSeq
-from numpy import save
-from sympy import hyper
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils import checkpoint
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
+from utils.processing import get_weights
 from utils.checkpointing import load_checkpoint, save_checkpoint
 from utils.earlystopping import EarlyStopping
 from utils.loss import FocalLoss
@@ -56,13 +53,14 @@ class HyperParams:
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
     max_grad_norm: float = 0.2
-    log_frequency: int = 1_000
+    log_frequency: int = 1_000 if torch.cuda.is_available() else 1
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
-    checkpoint_path: str = "/opt/ml/checkpoints"
-    model_output_path: str = "/opt/ml/model"
-    data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "")
+
+    checkpoint_path = "/opt/ml/checkpoints" if os.path.exists("/opt/ml/checkpoints") else "./checkpoints"
+    model_output_path = "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
+    data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "./data")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
     def parse_arguments(self, description: str):
@@ -144,7 +142,7 @@ def main(hyperparams: HyperParams) -> None:
     ############ DATA ############
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_all_broadPeak"),
+        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"),
         fasta_file=os.path.join(hyperparams.data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(hyperparams.data_dir, "cell_lines/"),
         return_augs=False,
@@ -153,24 +151,9 @@ def main(hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
-    # Assuming dataset is a list or similar iterable
-    sample_size = 100000
-    sampled_dataset = random.sample(list(dataset), sample_size)
-    if hyperparams.local_rank == 0:
-        print("calculating weights...")
-
-
-    class_counts = Counter()
-    for _, target, _ in sampled_dataset:  # Adjust this line based on the structure of your dataset
-        class_counts[target] += 1
-
-    # Estimate weights based on the sampled dataset
-    weights = {class_id: sample_size / count for class_id, count in class_counts.items()}
-
-    # Weights for each class
-    weight_for_class_0 = weights[0]
-    weight_for_class_1 = weights[1]
+    weights = get_weights(os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"))
     
+ 
     total_size = len(dataset)
     valid_size = 20_000
     train_size = total_size - valid_size
@@ -179,8 +162,6 @@ def main(hyperparams: HyperParams) -> None:
     num_workers = 6 if torch.cuda.device_count() >= 1 else 0
 
     if hyperparams.local_rank == 0:
-        print(f"Negative weight: {weight_for_class_0}")
-        print(f"Positive weight: {weight_for_class_1}")
         print(f"Using {num_workers} workers")
 
     if DISTRIBUTED:
@@ -239,11 +220,6 @@ def main(hyperparams: HyperParams) -> None:
         model.named_parameters(), weight_decay=0.1
     )
 
-    # Assuming class_counts and num_samples are already computed as before
-    weights = torch.tensor(
-        [num_samples / class_counts[0], num_samples / class_counts[1]],
-        dtype=torch.float,
-    )
 
     # Instantiate FocalLoss with the class weights
     criterion = FocalLoss(weight=weights)
@@ -275,15 +251,6 @@ def main(hyperparams: HyperParams) -> None:
         total_loss = None
         correct_predictions = None
         total_predictions = None
-        save_checkpoint(
-            model,
-            optimizer,
-            scheduler,
-            early_stopping,
-            epoch + 1,
-            hyperparams,
-            save_best_model=True,
-        )
     else:
         (
             model,
@@ -329,7 +296,7 @@ def main(hyperparams: HyperParams) -> None:
         if hyperparams.local_rank == 0:
             if torch.isnan(torch.tensor(train_loss)):
                 if DISTRIBUTED:
-                    torch.distributed.destroy_process_group()
+                    dist.destroy_process_group()
                 break
 
         val_loss, val_acc = validate_one_epoch(
@@ -346,7 +313,7 @@ def main(hyperparams: HyperParams) -> None:
 
             if early_stopping(val_loss, model):
                 if DISTRIBUTED:
-                    torch.distributed.destroy_process_group()
+                    dist.destroy_process_group()
                 break
 
             total_loss, correct_predictions, total_predictions = None, None, None
@@ -356,7 +323,7 @@ def main(hyperparams: HyperParams) -> None:
                 optimizer,
                 scheduler,
                 early_stopping,
-                epoch + 1,
+                epoch,
                 hyperparams,
                 save_best_model=True,
             )
