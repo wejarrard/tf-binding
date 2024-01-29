@@ -18,10 +18,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
-from utils.processing import get_weights
 from utils.checkpointing import load_checkpoint, save_checkpoint
 from utils.earlystopping import EarlyStopping
 from utils.loss import FocalLoss
+from utils.processing import get_weights
 from utils.training import (
     count_directories,
     get_params_without_weight_decay_ln,
@@ -57,9 +57,14 @@ class HyperParams:
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
-
-    checkpoint_path = "/opt/ml/checkpoints" if os.path.exists("/opt/ml/checkpoints") else "./checkpoints"
-    model_output_path = "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
+    checkpoint_path = (
+        "/opt/ml/checkpoints"
+        if os.path.exists("/opt/ml/checkpoints")
+        else "./checkpoints"
+    )
+    model_output_path = (
+        "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
+    )
     data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "./data")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
@@ -152,8 +157,7 @@ def main(hyperparams: HyperParams) -> None:
     )
 
     weights = get_weights(os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"))
-    
- 
+
     total_size = len(dataset)
     valid_size = 20_000
     train_size = total_size - valid_size
@@ -220,7 +224,6 @@ def main(hyperparams: HyperParams) -> None:
         model.named_parameters(), weight_decay=0.1
     )
 
-
     # Instantiate FocalLoss with the class weights
     criterion = FocalLoss(weight=weights)
     optimizer = torch.optim.AdamW(
@@ -244,7 +247,7 @@ def main(hyperparams: HyperParams) -> None:
         save_path=f"{hyperparams.model_output_path}/best_model.pth",
     )
 
-    # Load 
+    # Load
     if not os.path.isfile(hyperparams.checkpoint_path + "/checkpoint.pth"):
         epoch_number = 0
         current_batch = 0
@@ -264,11 +267,6 @@ def main(hyperparams: HyperParams) -> None:
             total_predictions,
         ) = load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams)
 
-    ############ TENSORBOARD ############ TODO: Add in Tensorboard support
-
-    writer = SummaryWriter(
-        log_dir="/opt/ml/output/tensorboard" if torch.cuda.is_available() else "output"
-    )
     ############ TRAINING ############
 
     for epoch in range(epoch_number, hyperparams.num_epochs):
@@ -354,10 +352,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
-from utils.processing import get_weights
 from utils.checkpointing import load_checkpoint, save_checkpoint
 from utils.earlystopping import EarlyStopping
 from utils.loss import FocalLoss
+from utils.processing import get_weights
 from utils.training import (
     count_directories,
     get_params_without_weight_decay_ln,
@@ -393,9 +391,14 @@ class HyperParams:
     # focal_loss_alpha: float = 1
     # focal_loss_gamma: float = 2
 
-
-    checkpoint_path = "/opt/ml/checkpoints" if os.path.exists("/opt/ml/checkpoints") else "./checkpoints"
-    model_output_path = "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
+    checkpoint_path = (
+        "/opt/ml/checkpoints"
+        if os.path.exists("/opt/ml/checkpoints")
+        else "./checkpoints"
+    )
+    model_output_path = (
+        "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
+    )
     data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "./data")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
@@ -488,8 +491,7 @@ def main(hyperparams: HyperParams) -> None:
     )
 
     weights = get_weights(os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"))
-    
- 
+
     total_size = len(dataset)
     valid_size = 20_000
     train_size = total_size - valid_size
@@ -556,7 +558,6 @@ def main(hyperparams: HyperParams) -> None:
         model.named_parameters(), weight_decay=0.1
     )
 
-
     # Instantiate FocalLoss with the class weights
     criterion = FocalLoss(weight=weights)
     optimizer = torch.optim.AdamW(
@@ -580,7 +581,7 @@ def main(hyperparams: HyperParams) -> None:
         save_path=f"{hyperparams.model_output_path}/best_model.pth",
     )
 
-    # Load 
+    # Load
     if not os.path.isfile(hyperparams.checkpoint_path + "/checkpoint.pth"):
         epoch_number = 0
         current_batch = 0

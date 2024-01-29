@@ -177,8 +177,8 @@ def train_one_epoch(
                         total_loss=total_loss,
                         correct_predictions=correct_predictions,
                         total_predictions=total_predictions,
+                        current_batch=current_batch,
                     )
-                    
 
     average_loss = total_loss / len(train_loader)
     accuracy = correct_predictions / total_predictions * 100
