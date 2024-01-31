@@ -101,4 +101,5 @@ Steps to run the finetuning script:
 - [ ] Make pathing to s3 more intuitive and less hardcoded.
 - [ ] Use accelerate instead of torch distributed?
 - ⏳ implement sagemaker local mode for easier debugging.
+- [ ] Add quantized training to the model for faster inference.
 - [ ] Create a Hugging Face space using Gradio for the project.
