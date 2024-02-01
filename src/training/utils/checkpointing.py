@@ -41,13 +41,6 @@ def save_checkpoint(
         checkpointing_path,
     )
 
-    print(
-        current_batch,
-        total_loss,
-        correct_predictions,
-        total_predictions,
-    )
-
     if save_best_model:
         source_best_model_path = f"{hyperparams.model_output_path}/best_model.pth"
         target_best_model_path = f"{hyperparams.checkpoint_path}/best_model.pth"
@@ -66,7 +59,7 @@ def load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams):
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     early_stopping.load_state_dict(checkpoint["early_stopping_state"])
 
-    current_batch = checkpoint.get("current_batch", 0)
+    current_batch = checkpoint["current_batch"]
     epoch_number = checkpoint["epoch"]
     total_loss = checkpoint.get("total_loss", None)
     correct_predictions = checkpoint.get("correct_predictions", None)
@@ -77,13 +70,6 @@ def load_checkpoint(model, optimizer, scheduler, early_stopping, hyperparams):
         target_best_model_path = f"{hyperparams.model_output_path}/best_model.pth"
         shutil.copyfile(source_best_model_path, target_best_model_path)
         print(f"Best model saved to {target_best_model_path}")
-
-    print(
-        current_batch,
-        total_loss,
-        correct_predictions,
-        total_predictions,
-    )
 
     return (
         model,
