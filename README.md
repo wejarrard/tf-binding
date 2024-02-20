@@ -89,7 +89,7 @@ Steps to run the finetuning script:
 - [x] Overlap of AR Binding site with STAR-seq data.
   - [x] Pull down training predictions as well as validation
   - [x] Compare that to STAR-seq data
-- ⏳ Enable spot training in our scripts.
+- [x] Enable spot training in our scripts.
 - [ ] Develop a model to predict multiple TFs simultaneously.
   - [ ] Modify inputs to have both positive and negative columns listing the TFs.
     - [ ] Make this file easy to generate. Take in multiple Bed files and merge.
@@ -100,6 +100,6 @@ Steps to run the finetuning script:
 - [ ] Naming convention for cell lines.
 - [ ] Make pathing to s3 more intuitive and less hardcoded.
 - [ ] Use accelerate instead of torch distributed?
-- ⏳ implement sagemaker local mode for easier debugging.
 - [ ] Add quantized training to the model for faster inference.
+- ⏳ Change to pytorch lightning for easier debugging and training
 - [ ] Create a Hugging Face space using Gradio for the project.
