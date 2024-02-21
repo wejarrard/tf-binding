@@ -511,7 +511,6 @@ class DeepSeqBase(nn.Module):
 
         elif type(x) == torch.Tensor and x.dtype == torch.long:
             x = seq_indices_to_one_hot(x)
-        x.to(self.device)
 
         no_batch = x.ndim == 2
 

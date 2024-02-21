@@ -22,4 +22,4 @@ class EnformerConfig:
         7  # genetic sequence is downsampled 2 ** 7 == 128x in default Enformer
     )
     dim_divisible_by: int = 128
-    use_tf_gamma: bool = True
+    use_tf_gamma: bool = False

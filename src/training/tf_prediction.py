@@ -10,7 +10,7 @@ import torch._dynamo
 import torch.nn as nn
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
 from models.config import EnformerConfig
 from models.deepseq import DeepSeqBase
 from torch.utils.data import DataLoader
@@ -24,10 +24,6 @@ def seed_everything(seed: int = 42) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.enabled = False
-    torch.use_deterministic_algorithms
 
 
 ############ HYPERPARAMETERS ############
@@ -35,7 +31,7 @@ def seed_everything(seed: int = 42) -> None:
 class HyperParams:
     # Hyperparameters and environment variable-based parameters
     num_epochs: int = 50
-    batch_size: int = 8 if torch.cuda.is_available() else 1
+    batch_size: int = 16 if torch.cuda.is_available() else 1
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
     max_grad_norm: float = 0.2
@@ -44,12 +40,12 @@ class HyperParams:
     checkpoint_path = (
         "/opt/ml/checkpoints"
         if os.path.exists("/opt/ml/checkpoints")
-        else "../misc/data/checkpoints"
+        else "./checkpoints"
     )
     model_output_path = (
-        "/opt/ml/model" if os.path.exists("/opt/ml/model") else "../misc/output"
+        "/opt/ml/model" if os.path.exists("/opt/ml/model") else "./output"
     )
-    data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "../misc/data")
+    data_dir: str = os.environ.get("SM_CHANNEL_TRAINING", "./data")
     local_rank: int = int(os.environ.get("LOCAL_RANK", 0))
 
     def parse_arguments(self, description: str):
@@ -72,6 +68,10 @@ class DeepSeq(pl.LightningModule):
         self, config, train_loader_length: int, number_of_classes=1, state_dict=None
     ):
         super().__init__()
+        self.train_acc = BinaryAccuracy(threshold=0.5)
+        self.valid_acc = BinaryAccuracy(threshold=0.5)
+        self.train_loader_length = train_loader_length
+
         self.model = DeepSeqBase(config)
 
         if state_dict:
@@ -88,8 +88,6 @@ class DeepSeq(pl.LightningModule):
             nn.Linear(512, number_of_classes),
         )
 
-        self.train_loader_length = train_loader_length
-
     def forward(self, x):
         return self.model(x)
 
@@ -97,23 +95,49 @@ class DeepSeq(pl.LightningModule):
         inputs, targets, data_inds = batch[0], batch[1], batch[2]
         outputs = self.model(inputs)
         criterion = nn.BCEWithLogitsLoss()
-        loss = criterion(outputs, targets)
-        accuracy = BinaryAccuracy(threshold=0.5)
-        accuracy(outputs, targets)
-        self.log("train_loss", loss)
-        self.log("train_accuracy", accuracy)
-        return loss
+        train_loss = criterion(outputs, targets)
+        self.train_acc(outputs, targets)
+        self.log(
+            "train_loss",
+            train_loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        self.log(
+            "train_accuracy",
+            self.train_acc,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        return train_loss
 
     def validation_step(self, batch, batch_idx):
         inputs, targets, data_inds = batch[0], batch[1], batch[2]
         outputs = self.model(inputs)
         criterion = nn.BCEWithLogitsLoss()
-        loss = criterion(outputs, targets)
-        accuracy = BinaryAccuracy(threshold=0.5)
-        accuracy(outputs, targets)
-        self.log("val_loss", loss)
-        self.log("val_accuracy", accuracy)
-        return loss
+        val_loss = criterion(outputs, targets)
+        self.valid_acc(outputs, targets)
+        self.log(
+            "val_loss",
+            val_loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        self.log(
+            "val_accuracy",
+            self.valid_acc,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        return val_loss
 
     def configure_optimizers(self):
         param_groups = get_params_without_weight_decay_ln(
@@ -144,7 +168,7 @@ def main(hyperparams: HyperParams) -> None:
 
     ############ DATALOADERS ############
 
-    num_workers = 6 if torch.cuda.is_available() else 0
+    num_workers = 6 if torch.cuda.is_available() else 2
 
     train_dataset = TFIntervalDataset(
         bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"),
@@ -231,12 +255,16 @@ def main(hyperparams: HyperParams) -> None:
         enable_version_counter=False,
     )
 
+    progress_bar_callback = TQDMProgressBar(refresh_rate=5_000)
+
     # Trainer
     trainer = pl.Trainer(
         accelerator="auto",
         max_epochs=hyperparams.num_epochs,
-        callbacks=[early_stop_callback, checkpoint_callback],
+        callbacks=[early_stop_callback, checkpoint_callback, progress_bar_callback],
         gradient_clip_val=None,
+        deterministic=True,
+        log_every_n_steps=500,
     )
 
     trainer.fit(
