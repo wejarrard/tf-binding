@@ -11,7 +11,6 @@ from enformer_pytorch.config_enformer import EnformerConfig
 from enformer_pytorch.data import seq_indices_to_one_hot, str_to_one_hot
 from torch import einsum, nn
 from torch.utils.checkpoint import checkpoint_sequential
-from transformers import PreTrainedModel
 
 # constants
 
@@ -25,9 +24,8 @@ TARGET_LENGTH = 896
 DIR = Path(os.environ.get("SM_CHANNEL_TRAINING", Path(__file__).parents[0]))
 TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
 
+
 # helpers
-
-
 class PrintShape(nn.Module):
     def __init__(self, name=""):
         super(PrintShape, self).__init__()
@@ -150,9 +148,11 @@ def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
-        get_positional_features_gamma
-        if not use_tf_gamma
-        else always(TF_GAMMAS.to(device)),
+        (
+            get_positional_features_gamma
+            if not use_tf_gamma
+            else always(TF_GAMMAS.to(device))
+        ),
     ]
 
     num_components = len(feature_functions) * 2
@@ -351,18 +351,14 @@ class Attention(nn.Module):
 
 
 # main class
-
-
-class DeepSeq(PreTrainedModel):
-    config_class = EnformerConfig
-    base_model_prefix = "enformer"
-
+class DeepSeqBase(nn.Module):
     @staticmethod
-    def from_hparams(**kwargs):
-        return DeepSeq(EnformerConfig(**kwargs))
+    def from_hparams(**kwargs) -> "DeepSeqBase":
+        config = EnformerConfig(**kwargs)
+        return DeepSeqBase(config)
 
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config: EnformerConfig):
+        super(DeepSeqBase, self).__init__()
         self.dim = config.dim
         half_dim = config.dim // 2
         twice_dim = config.dim * 2
@@ -508,11 +504,6 @@ class DeepSeq(PreTrainedModel):
     def forward(
         self,
         x,
-        target=None,
-        return_corr_coef=False,
-        return_embeddings=False,
-        return_only_embeddings=False,
-        head=None,
         target_length=None,
     ):
         if isinstance(x, list):
@@ -536,25 +527,6 @@ class DeepSeq(PreTrainedModel):
         if no_batch:
             x = rearrange(x, "() ... -> ...")
 
-        if return_only_embeddings:
-            return x
-
         out = self.out(x)
 
         return out
-
-
-# from pretrained function
-
-
-def from_pretrained(name, use_tf_gamma=None, **kwargs):
-    enformer = Enformer.from_pretrained(name, **kwargs)
-
-    if name == "EleutherAI/enformer-official-rough":
-        use_tf_gamma = default(use_tf_gamma, True)
-
-        for module in enformer.modules():
-            if isinstance(module, Attention):
-                module.use_tf_gamma = use_tf_gamma
-
-    return enformer
