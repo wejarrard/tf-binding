@@ -8,6 +8,7 @@ import lightning as pl
 import torch
 import torch._dynamo
 import torch.nn as nn
+import pysam
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
@@ -15,9 +16,10 @@ from models.config import EnformerConfig
 from models.deepseq import DeepSeqBase
 from torch.utils.data import DataLoader
 from torchmetrics.classification import BinaryAccuracy
-from transformers import get_linear_schedule_with_warmup
+from utils.scheduler import get_linear_schedule_with_warmup
 from utils.training import count_directories, get_params_without_weight_decay_ln
 
+pysam.set_verbosity(0)
 
 def seed_everything(seed: int = 42) -> None:
     # Set seed for reproducibility
@@ -31,7 +33,7 @@ def seed_everything(seed: int = 42) -> None:
 class HyperParams:
     # Hyperparameters and environment variable-based parameters
     num_epochs: int = 50
-    batch_size: int = 16 if torch.cuda.is_available() else 1
+    batch_size: int = 8 if torch.cuda.is_available() else 1
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
     max_grad_norm: float = 0.2
@@ -171,7 +173,7 @@ def main(hyperparams: HyperParams) -> None:
     num_workers = 6 if torch.cuda.is_available() else 2
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"),
+        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak_train"),
         fasta_file=os.path.join(hyperparams.data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(hyperparams.data_dir, "cell_lines/"),
         return_augs=False,
@@ -190,7 +192,7 @@ def main(hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"),
+        bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak_val"),
         fasta_file=os.path.join(hyperparams.data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(hyperparams.data_dir, "cell_lines/"),
         return_augs=False,

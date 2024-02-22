@@ -5,10 +5,10 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from dataloaders.tf import seq_indices_to_one_hot, str_to_one_hot
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
-from enformer_pytorch.config_enformer import EnformerConfig
-from enformer_pytorch.data import seq_indices_to_one_hot, str_to_one_hot
+from models.config import EnformerConfig
 from torch import einsum, nn
 from torch.utils.checkpoint import checkpoint_sequential
 
