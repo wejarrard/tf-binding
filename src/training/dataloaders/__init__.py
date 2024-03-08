@@ -1,2 +1,2 @@
 from .pretrain import GenomeIntervalDataset
-from .tf import TFIntervalDataset, ValidationGenomeIntervalDataset
+from .tf import TFIntervalDataset

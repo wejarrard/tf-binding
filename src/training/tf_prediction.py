@@ -170,7 +170,7 @@ def main(hyperparams: HyperParams) -> None:
 
     ############ DATALOADERS ############
 
-    num_workers = 6 if torch.cuda.is_available() else 2
+    num_workers = 6 if torch.cuda.is_available() else 4
 
     train_dataset = TFIntervalDataset(
         bed_file=os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak_train"),
@@ -252,27 +252,35 @@ def main(hyperparams: HyperParams) -> None:
         filename=f"best_model",
         verbose=True,
         mode="min",
-        every_n_train_steps=500,
+        every_n_train_steps=1,
         enable_version_counter=False,
     )
-
-    progress_bar_callback = TQDMProgressBar(refresh_rate=5_000)
 
     # Trainer
     trainer = pl.Trainer(
         accelerator="auto",
         max_epochs=hyperparams.num_epochs,
-        callbacks=[early_stop_callback, checkpoint_callback, progress_bar_callback],
+        callbacks=[early_stop_callback, checkpoint_callback],
         gradient_clip_val=None,
         deterministic=True,
-        log_every_n_steps=500,
+        log_every_n_steps=1,
     )
 
-    trainer.fit(
+    if os.path.exists(f"{hyperparams.checkpoint_path}/best_model.ckpt"):
+        print("\n \n \n Resuming Training \n \n \n")
+        trainer.fit(
         model=model,
         train_dataloaders=train_loader,
         val_dataloaders=valid_loader,
-    )
+        ckpt_path=f"{hyperparams.checkpoint_path}/best_model.ckpt"
+        )       
+    else:
+        print("\n \n \n Starting new training run \n \n \n")
+        trainer.fit(
+            model=model,
+            train_dataloaders=train_loader,
+            val_dataloaders=valid_loader,
+        )
 
 
 if __name__ == "__main__":

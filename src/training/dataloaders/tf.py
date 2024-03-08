@@ -336,6 +336,8 @@ class TFIntervalDataset(Dataset):
 
         label_encoded = self.one_hot_encode_(label)
 
+        score = torch.tensor([score])
+
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
         if self.mode == "train":
             return (
