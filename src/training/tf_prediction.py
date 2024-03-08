@@ -5,10 +5,11 @@ import os
 from dataclasses import dataclass
 
 import lightning as pl
+import pysam
 import torch
 import torch._dynamo
 import torch.nn as nn
-import pysam
+import torch.nn.functional as F
 from dataloaders.tf import TFIntervalDataset
 from einops.layers.torch import Rearrange
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
@@ -20,6 +21,7 @@ from utils.scheduler import get_linear_schedule_with_warmup
 from utils.training import count_directories, get_params_without_weight_decay_ln
 
 pysam.set_verbosity(0)
+
 
 def seed_everything(seed: int = 42) -> None:
     # Set seed for reproducibility
@@ -94,10 +96,9 @@ class DeepSeq(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        inputs, targets, data_inds = batch[0], batch[1], batch[2]
+        inputs, targets, score = batch[0], batch[1], batch[2]
         outputs = self.model(inputs)
-        criterion = nn.BCEWithLogitsLoss()
-        train_loss = criterion(outputs, targets)
+        train_loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=score)
         self.train_acc(outputs, targets)
         self.log(
             "train_loss",
@@ -118,10 +119,9 @@ class DeepSeq(pl.LightningModule):
         return train_loss
 
     def validation_step(self, batch, batch_idx):
-        inputs, targets, data_inds = batch[0], batch[1], batch[2]
+        inputs, targets = batch[0], batch[1]
         outputs = self.model(inputs)
-        criterion = nn.BCEWithLogitsLoss()
-        val_loss = criterion(outputs, targets)
+        val_loss = F.binary_cross_entropy_with_logits(outputs, targets)
         self.valid_acc(outputs, targets)
         self.log(
             "val_loss",
@@ -180,6 +180,7 @@ def main(hyperparams: HyperParams) -> None:
         rc_aug=True,
         shift_augs=(-50, 50),
         context_length=16_384,
+        mode="train",
     )
 
     train_loader = DataLoader(
@@ -196,9 +197,9 @@ def main(hyperparams: HyperParams) -> None:
         fasta_file=os.path.join(hyperparams.data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(hyperparams.data_dir, "cell_lines/"),
         return_augs=False,
-        rc_aug=True,
-        shift_augs=(-50, 50),
+        rc_aug=False,
         context_length=16_384,
+        mode="valid",
     )
 
     valid_loader = DataLoader(
@@ -229,8 +230,6 @@ def main(hyperparams: HyperParams) -> None:
 
     for param in model.parameters():
         param.requires_grad = True
-
-    # weights = get_weights(os.path.join(hyperparams.data_dir, "AR_ATAC_broadPeak"))
 
     ############ TRAINING ############
 
