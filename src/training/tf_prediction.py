@@ -269,8 +269,9 @@ def main(hyperparams: HyperParams) -> None:
         accelerator="auto",
         max_epochs=hyperparams.num_epochs,
         callbacks=[early_stop_callback, checkpoint_callback, progress_bar_callback],
-        gradient_clip_val=None,
+        accumulate_grad_batches=4,
         deterministic=True,
+        gradient_clip_val=hyperparams.max_grad_norm,
         log_every_n_steps=500,
     )
 
