@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 
 # helper functions
 
@@ -270,7 +270,7 @@ class GenomicInterval:
         return extended_data, rand_shift_tensor, rand_aug_bool_tensor
 
 
-class TFIntervalDataset(Dataset):
+class GenomeIntervalDataset(Dataset):
     def __init__(
         self,
         bed_file,
@@ -304,10 +304,6 @@ class TFIntervalDataset(Dataset):
             return_seq_indices=return_seq_indices,
             shift_augs=shift_augs,
             rc_aug=rc_aug,
-        )
-        self.label_folders = sorted(
-            [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
-            key=lambda x: x,
         )
 
     def one_hot_encode_(self, label: str) -> torch.Tensor:
@@ -424,13 +420,13 @@ class ValidationGenomeIntervalDataset(Dataset):
         return len(self.df)
 
 
-class MaskedTFIntervalDataset(TFIntervalDataset):
+class MaskedGenomeIntervalDataset(GenomeIntervalDataset):
     def __init__(self, mask_prob=0.15, *args, **kwargs):
-        super(MaskedTFIntervalDataset, self).__init__(*args, **kwargs)
+        super(MaskedGenomeIntervalDataset, self).__init__(*args, **kwargs)
         self.mask_prob = mask_prob
 
     def __getitem__(self, index):
-        seq, labels = super(MaskedTFIntervalDataset, self).__getitem__(index)
+        seq, labels = super(MaskedGenomeIntervalDataset, self).__getitem__(index)
 
         # Mask the sequence and get the labels
         masked_seq, _ = mask_sequence(seq, mask_prob=self.mask_prob)
@@ -439,29 +435,30 @@ class MaskedTFIntervalDataset(TFIntervalDataset):
 
 
 if __name__ == "__main__":
-    data_dir = "./"
-    # torch.manual_seed(42)
+    data_dir = "data/"
+    torch.manual_seed(42)
 
-    dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "combined.bed"),
+    dataset = GenomeIntervalDataset(
+        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
-        rc_aug=False,
-        shift_augs=(-3, 3),
+        rc_aug=True,
+        shift_augs=(-50, 50),
         context_length=16_384,
     )
 
-    random_index = torch.randint(0, len(dataset), (1,)).item()
-    extended_data = dataset[random_index]
+    total_size = len(dataset)
+    valid_size = 20_000
+    train_size = total_size - valid_size
 
-    print("Extended Data:")
-    print(extended_data)
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
 
-    # Assuming extended_data[0] is your tensor
-    fifth_column = extended_data[0][:, 4]
-
-    # Finding the maximum value in the 5th column
-    max_value = torch.max(fifth_column)
-
-    print(max_value)
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=4,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=True,
+    )

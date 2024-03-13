@@ -1,4 +1,3 @@
-import os
 import time
 from pathlib import Path
 from random import random, randrange
@@ -10,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from pyfaidx import Fasta
 from torch.utils.data import Dataset
+import os
 
 # helper functions
 
@@ -343,7 +343,7 @@ class GenomeIntervalDataset(Dataset):
                 chr_name, start, end, pileup_dir, return_augs=self.return_augs
             ),
             labels_encoded,
-            ind,
+            ind
         )
 
     def __len__(self):

@@ -1,16 +1,20 @@
 import math
-import os
 from pathlib import Path
+import os
 
 import torch
-import torch.distributed as dist
+from torch import nn, einsum
 import torch.nn.functional as F
+import torch.distributed as dist
+from torch.utils.checkpoint import checkpoint_sequential
+
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
+
+from enformer_pytorch.data import str_to_one_hot, seq_indices_to_one_hot
+
 from enformer_pytorch.config_enformer import EnformerConfig
-from enformer_pytorch.data import seq_indices_to_one_hot, str_to_one_hot
-from torch import einsum, nn
-from torch.utils.checkpoint import checkpoint_sequential
+
 from transformers import PreTrainedModel
 
 # constants
@@ -538,6 +542,25 @@ class DeepSeq(PreTrainedModel):
 
         if return_only_embeddings:
             return x
+
+        # out = map_values(lambda fn: fn(x), self.heads)
+
+        # if exists(head):
+        #     assert head in self._heads, f"head {head} not found"
+        #     out = out[head]
+
+        # if exists(target):
+        #     assert exists(
+        #         head
+        #     ), "head must be passed in if one were to calculate loss directly with targets"
+
+        #     if return_corr_coef:
+        #         return pearson_corr_coef(out, target)
+
+        #     return poisson_loss(out, target)
+
+        # if return_embeddings:
+        #     return out, x
 
         out = self.out(x)
 
