@@ -3,9 +3,10 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from enformer_pytorch import Enformer
-from torch.cuda.amp.grad_scaler import GradScaler
 from torch.cuda.amp.autocast_mode import autocast
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
@@ -82,11 +83,13 @@ def train_one_epoch(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for batch_idx, batch in enumerate(train_loader):
-        inputs, targets, data_inds = batch[0], batch[1], batch[2]
-        assert not torch.isnan(inputs).any(), f"NaNs in inputs {data_inds}"
-        assert not torch.isnan(targets).any(), f"NaNs in targets {data_inds}"
+        inputs, targets, weights = batch[0], batch[1], batch[2]
 
-        inputs, targets = inputs.to(device), targets.to(device)
+        inputs, targets, weights = (
+            inputs.to(device),
+            targets.to(device),
+            weights.to(device),
+        )
 
         optimizer.zero_grad()
 
@@ -94,9 +97,9 @@ def train_one_epoch(
         if scaler and is_distributed:
             with autocast():
                 outputs = model(inputs)
-                assert not torch.isnan(outputs).any(), f"NaNs in model outputs {data_inds}"
-                loss = criterion(outputs, targets)
-                assert not torch.isnan(loss).any(), f"NaNs in loss {data_inds}"
+                loss = F.binary_cross_entropy_with_logits(
+                    outputs, targets, weight=weights
+                )
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             clip_grad_norm_(model.parameters(), max_norm=0.2)
@@ -104,7 +107,7 @@ def train_one_epoch(
             scaler.update()
         else:
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
             loss.backward()
             clip_grad_norm_(model.parameters(), max_norm=0.2)
 
@@ -159,14 +162,16 @@ def validate_one_epoch(
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, data_inds = (
-                batch[0].to(device),
-                batch[1].to(device),
-                batch[2],
+            inputs, targets, weights = batch[0], batch[1], batch[2]
+
+            inputs, targets, weights = (
+                inputs.to(device),
+                targets.to(device),
+                weights.to(device),
             )
 
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
 
             # Calculate and collect loss across all nodes
             if is_distributed:

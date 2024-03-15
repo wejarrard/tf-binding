@@ -10,7 +10,7 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from data_tf import GenomeIntervalDataset
+from data_tf_weighted import TFIntervalDataset
 from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
@@ -160,94 +160,49 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ DATA ############
 
-    dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
+    if torch.cuda.device_count() >= 1:
+        num_workers = 6
+    else:
+        num_workers = 0
+
+    train_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_train"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
         context_length=16_384,
+        mode="train",
     )
 
-    if torch.cuda.is_available():
-        total_size = len(dataset)
-        valid_size = 20_000
-        train_size = total_size - valid_size
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
 
-        train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
-    else:
-        # Create a subset of 100 samples from the dataset
-        subset_size = 2
-        subset_indices = torch.randperm(len(dataset))[:subset_size].tolist()
-        subset_dataset = torch.utils.data.Subset(dataset, subset_indices)
-        # Divide the subset into training and validation
-        valid_size = 1  # Set your validation size
-        train_size = subset_size - valid_size
-        train_dataset, valid_dataset = random_split(
-            subset_dataset, [train_size, valid_size]
-        )
+    valid_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_val"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        return_augs=False,
+        rc_aug=False,
+        context_length=16_384,
+        mode="train",
+    )
 
-    assert (
-        train_size > 0
-    ), f"The dataset only contains {total_size} samples, but {valid_size} samples are required for the validation set."
-
-    if torch.cuda.device_count() >= 1:
-        num_workers = 6
-    else:
-        num_workers = 0
-
-    print(f"Using {num_workers} workers")
-
-    if DISTRIBUTED:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=args.local_rank,
-            drop_last=True,
-        )
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=train_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True,
-        )
-
-        valid_sampler = torch.utils.data.distributed.DistributedSampler(
-            valid_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=dist.get_rank(),
-            shuffle=False,
-            drop_last=True,
-        )
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=valid_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True,
-        )
-    else:
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True,
-        )
-
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True,
-        )
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
 
     ############ TRAINING PARAMS ############
 
