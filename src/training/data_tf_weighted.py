@@ -347,6 +347,18 @@ class TFIntervalDataset(Dataset):
                 label_encoded,
                 score,
             )
+        elif self.mode == "inference":
+            return (
+                self.processor(
+                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
+                ),
+                label_encoded,
+                score,
+                chr_name,
+                start,
+                end,
+                cell_line,
+            )
         else:
             return (
                 self.processor(

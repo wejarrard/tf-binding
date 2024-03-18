@@ -95,18 +95,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         else:
             device = torch.device("cuda")
 
-        # Checking GPU compatibility
-        gpu_ok = torch.cuda.get_device_capability() in (
-            (7, 0),
-            (8, 0),
-            (9, 0),
-        )
-
-        if not gpu_ok:
-            print(
-                "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected."
-            )
-
     ############ MODEL ############
 
     num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
