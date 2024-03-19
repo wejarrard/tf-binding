@@ -13,16 +13,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from sagemaker.s3 import S3Downloader
-from sagemaker.session import Session
-
-from ..training.data_tf_weighted import TFIntervalDataset
+from dataloader import HDF5CSVLoader
+import zipfile
 from ..training.deepseq import DeepSeq
 
-sagemaker_session = Session()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# tmpdir = "/tmp/"
+tmpdir = "data"
 
 def get_predictions(model, device: torch.device, val_loader: DataLoader):
     model.eval()
@@ -86,30 +84,31 @@ def get_predictions(model, device: torch.device, val_loader: DataLoader):
 
     return result_df
 
-
-def download_data_from_s3(s3_uri):
-    S3Downloader.download(
-        s3_uri=s3_uri, local_path="/tmp/", sagemaker_session=sagemaker_session
-    )
-
-
 def input_fn(request_body, request_content_type):
-    assert request_content_type == "application/json"
-    data = json.loads(request_body)["inputs"]
-    data = torch.tensor(data, dtype=torch.float32, device=device)
-
-    download_data_from_s3("s3://tf-binding-sites/pretraining/data/")
-
-    dataset = TFIntervalDataset(
-        bed_file=os.path.join("/tmp/", "AR_ATAC_broadPeak_train"),
-        fasta_file=os.path.join("/tmp/", "genome.fa"),
-        cell_lines_dir=os.path.join("/tmp/", "cell_lines/"),
-        return_augs=False,
-        rc_aug=False,
-        shift_augs=(0, 0),
-        context_length=16_384,
-        mode="inference",
-    )
+    # Ensure the content type is as expected
+    assert request_content_type == "application/zip", f"Unexpected content type: {request_content_type}"
+    
+    # Assuming request_body is a binary stream of the zip file
+    zip_path = os.path.join(tmpdir, "input.zip")
+    
+    # Write the incoming zip file to a temporary file
+    with open(zip_path, "wb") as f:
+        f.write(request_body)
+    
+    # Extract the zip file
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(tmpdir)
+    
+    # Assuming specific file names for hdf5 and csv, adjust as necessary
+    hdf5_path = os.path.join(tmpdir, "tensors.hdf5")
+    csv_path = os.path.join(tmpdir, "metadata.csv")
+    
+    # Validate that the expected files were extracted
+    assert os.path.exists(hdf5_path), "HDF5 file not found in zip archive."
+    assert os.path.exists(csv_path), "CSV file not found in zip archive."
+    
+    # Load the dataset
+    dataset = HDF5CSVLoader(hdf5_path=hdf5_path, csv_path=csv_path)
 
     return dataset
 
@@ -151,6 +150,7 @@ def predict_fn(input_object: Dataset, model: object):
         shuffle=False,
         num_workers=num_workers,
         drop_last=False,
+        pin_memory=True
     )
 
     result_df = get_predictions(
@@ -171,17 +171,3 @@ def output_fn(prediction, accept):
     prediction.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)  # Rewind the buffer
     return csv_buffer.getvalue(), "text/csv"
-
-
-def main(output_dir: str, data_dir: str) -> None:
-    ############ DEVICE ############
-
-    ############ DATA ############
-
-    ############ TRAINING ############
-
-    
-
-
-if __name__ == "__main__":
-    main(output_dir="/opt/ml/model", data_dir="/opt/ml/input/data")

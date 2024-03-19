@@ -1,5 +1,5 @@
 # Byte-compiled / optimized / DLL files
-__pycache__/
+__pycache__
 *.py[cod]
 *$py.class
 
@@ -163,3 +163,4 @@ data/
 output/
 checkpoints/
 pretrained_weight.pth
+data.zip
