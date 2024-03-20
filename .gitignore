@@ -164,3 +164,6 @@ output/
 checkpoints/
 pretrained_weight.pth
 data.zip
+local_test/*
+model/
+input/

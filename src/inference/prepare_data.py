@@ -1,6 +1,5 @@
 import os
-import pandas as pd
-import h5py
+import tensorflow as tf
 import numpy as np
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -8,8 +7,23 @@ from training.data_tf_weighted import TFIntervalDataset
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+def _bytes_feature(value):
+    """Returns a bytes_list from a string / byte."""
+    if isinstance(value, type(tf.constant(0))):  # if value is tensor
+        value = value.numpy()  # get value of tensor
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+def _float_feature(value):
+    """Returns a float_list from a float / double."""
+    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
+def _int64_feature(value):
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
 data_dir = "training/data"
 output_dir = "inference/data"
+tfrecords_filename = os.path.join(output_dir, "dataset.tfrecords")
 
 dataset = TFIntervalDataset(
     bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_val"),
@@ -24,24 +38,22 @@ dataset = TFIntervalDataset(
 
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=8)
 
-# Prepare HDF5 file for tensors
-hdf5_path = os.path.join(output_dir, "tensors.hdf5")
-with h5py.File(hdf5_path, 'w') as hdf_file:
-    # Prepare CSV for metadata
-    metadata = {'id': [], 'chr_name': [], 'start': [], 'end': [], 'cell_line': []}
-    
-    for i, item in enumerate(tqdm(dataloader, desc="Saving Data")):
-        # Save tensors
-        grp = hdf_file.create_group(str(i))
-        for j, tensor in enumerate(item[:3]):  # Assuming the first three elements are tensors
-            grp.create_dataset(name=f'tensor_{j}', data=tensor.numpy(), compression="gzip")
-        
-        # Save metadata, convert tensors and tuples to strings and ints
-        metadata['id'].append(i)
-        metadata['chr_name'].append(item[3][0])  # Assuming item[3] is a tuple like ('chr1',)
-        metadata['start'].append(int(item[4].item()))  # Convert tensor to int
-        metadata['end'].append(int(item[5].item()))  # Convert tensor to int
-        metadata['cell_line'].append(item[6][0])  # Assuming item[6] is a tuple like ('LNCAP',)
-    
-    # Save metadata to CSV
-    pd.DataFrame(metadata).to_csv(os.path.join(output_dir, "metadata.csv"), index=False)
+with tf.io.TFRecordWriter(tfrecords_filename) as writer:
+    for item in tqdm(dataloader, desc="Saving TFRecords"):
+        # Create a feature
+        feature = {
+            # Assuming the first three elements are tensors and need to be saved as byte arrays
+            'tensor_0': _bytes_feature(tf.io.serialize_tensor(item[0])),
+            'tensor_1': _bytes_feature(tf.io.serialize_tensor(item[1])),
+            'tensor_2': _bytes_feature(tf.io.serialize_tensor(item[2])),
+            'chr_name': _bytes_feature(item[3][0].encode()),  # Encode string to bytes
+            'start': _int64_feature(int(item[4].item())),
+            'end': _int64_feature(int(item[5].item())),
+            'cell_line': _bytes_feature(item[6][0].encode()),
+        }
+
+        # Create an example protocol buffer
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+
+        # Serialize to string and write on the file
+        writer.write(example.SerializeToString())

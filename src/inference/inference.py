@@ -4,7 +4,6 @@
 #     output_file.txt
 
 import io
-import json
 import os
 
 import pandas as pd
@@ -15,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from dataloader import HDF5CSVLoader
 import zipfile
-from ..training.deepseq import DeepSeq
+from deepseq import DeepSeq
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -129,7 +128,7 @@ def model_fn(model_dir):
         os.path.join(model_dir, "pretrained_weights.pth"), map_location=device
     )
     modified_state_dict = {
-        key.replace("_orig_mod.module.", ""): value for key, value in state_dict.items()
+        key.replace("_orig_mod.", ""): value for key, value in state_dict.items()
     }
     model.load_state_dict(modified_state_dict)
 
@@ -171,3 +170,37 @@ def output_fn(prediction, accept):
     prediction.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)  # Rewind the buffer
     return csv_buffer.getvalue(), "text/csv"
+
+
+
+def main():
+    # Example of directly using paths, could also use environment variables
+    model_dir = "/opt/ml/model"
+    input_path = "/opt/ml/input/data.zip"  # Simulate a path you'd get in SageMaker
+    output_path = "/opt/ml/output/result.csv"  # Simulate an output path
+
+    # Load the model
+    model = model_fn(model_dir)
+
+    # For simplicity, assume input is directly a file; adjust as needed
+    with open(input_path, 'rb') as f:
+        payload = f.read()
+
+    # Simulate the content type SageMaker would provide; adjust as necessary
+    request_content_type = "application/zip"
+    dataset = input_fn(payload, request_content_type)
+
+    # Make predictions
+    predictions = predict_fn(dataset, model)
+
+    # Serialize predictions to CSV format
+    output, content_type = output_fn(predictions, "text/csv")
+
+    # Save or print the output
+    with open(output_path, 'w') as f:
+        f.write(output)
+
+    print(f"Output written to {output_path}")
+
+if __name__ == "__main__":
+    main()
