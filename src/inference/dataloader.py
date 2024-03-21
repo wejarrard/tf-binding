@@ -1,39 +1,69 @@
 
 import os
-import pandas as pd
-import h5py
 import torch
-from torch.utils.data import Dataset
+from tfrecord.torch.dataset import TFRecordDataset
+import numpy as np
+from torch.utils.data import DataLoader
 
-class HDF5CSVLoader(Dataset):
-    def __init__(self, hdf5_path, csv_path):
-        self.hdf5_path = hdf5_path
-        self.metadata = pd.read_csv(csv_path)
-        self.hdf5_file = None  # To be opened in the context manager
 
-    def __len__(self):
-        return len(self.metadata)
+class EnhancedTFRecordDataset(TFRecordDataset):
+    def __init__(self, *args, **kwargs):
+        super(EnhancedTFRecordDataset, self).__init__(*args, **kwargs)
 
-    def __getitem__(self, idx):
-        if self.hdf5_file is None:
-            self.hdf5_file = h5py.File(self.hdf5_path, 'r')
-
-        # Load tensor data from HDF5
-        group = self.hdf5_file[str(idx)]
-        tensors = [torch.tensor(group[f'tensor_{i}'][()]) for i in range(3)]  # Adjust if more tensors
+    def __iter__(self):
+        # Get the iterator from the parent class
+        parent_iter = super(EnhancedTFRecordDataset, self).__iter__()
         
-        # Load metadata
-        metadata_row = self.metadata.iloc[idx]
-        chr_name = metadata_row['chr_name']
-        start = metadata_row['start']
-        end = metadata_row['end']
-        cell_line = metadata_row['cell_line']
+        # Use map to apply `process` to each item in the iterator
+        processed_iter = map(self.process, parent_iter)
         
-        # Example of processing the metadata, if necessary
-        # Here you might need to adjust the format, especially if the tensors are expected in a specific shape
+        # Yield from the processed iterator
+        yield from processed_iter
 
-        return tensors + [chr_name, start, end, cell_line]
+    def recreate_tensor(self, binary_tensor, shape):
+        tensor = torch.from_numpy(np.frombuffer(binary_tensor, dtype=np.float64).copy().reshape(shape))
+        return tensor
 
-    def close(self):
-        if self.hdf5_file is not None:
-            self.hdf5_file.close()
+    def process(self, item):
+        """Convert 'input', 'target', and 'weight' binary data in a dictionary to PyTorch tensors."""
+        item['input'] = self.recreate_tensor(item['input'], [1, 16384, 5])
+        item['target'] = self.recreate_tensor(item['target'], [1])
+        item['weight'] = self.recreate_tensor(item['weight'], [1])
+
+        item["chr_name"] = item["chr_name"].decode()
+        item["cell_line"] = item["cell_line"].decode()
+
+
+        # Return the item with the updated fields
+        return item
+
+if __name__ == "__main__":
+
+    tfrecord_path = "./data/dataset.tfrecord"
+
+    index_path = None
+    description = {
+        'input': "byte",
+        'target': "byte",
+        'weight': "byte",
+        'chr_name': "byte",
+        'start': "int",
+        'end': "int",
+        'cell_line': "byte",
+    }
+    dataset = EnhancedTFRecordDataset(tfrecord_path, index_path, description)
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=8,
+        shuffle=False,
+        num_workers=4,
+        drop_last=False,
+        pin_memory=True
+    )
+
+    data = next(iter(dataloader))
+
+    for key, value in data.items():
+        print(type(value))
+

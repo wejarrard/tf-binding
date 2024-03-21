@@ -1,5 +1,5 @@
-# aws sagemaker-runtime invoke-endpoint \
 #     --endpoint-name endpoint_name \
+# aws sagemaker-runtime invoke-endpoint \
 #     --body fileb://$file_name \
 #     output_file.txt
 
@@ -12,9 +12,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from dataloader import HDF5CSVLoader
-import zipfile
-from deepseq import DeepSeq
+import numpy as np
+from tfrecord.torch.dataset import TFRecordDataset
+
+
+from inference.deepseq import DeepSeq
+from torchdata.datapipes.iter import FileLister, FileOpener, TFRecordLoader, Mapper
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -83,36 +86,9 @@ def get_predictions(model, device: torch.device, val_loader: DataLoader):
 
     return result_df
 
-def input_fn(request_body, request_content_type):
-    # Ensure the content type is as expected
-    assert request_content_type == "application/zip", f"Unexpected content type: {request_content_type}"
-    
-    # Assuming request_body is a binary stream of the zip file
-    zip_path = os.path.join(tmpdir, "input.zip")
-    
-    # Write the incoming zip file to a temporary file
-    with open(zip_path, "wb") as f:
-        f.write(request_body)
-    
-    # Extract the zip file
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(tmpdir)
-    
-    # Assuming specific file names for hdf5 and csv, adjust as necessary
-    hdf5_path = os.path.join(tmpdir, "tensors.hdf5")
-    csv_path = os.path.join(tmpdir, "metadata.csv")
-    
-    # Validate that the expected files were extracted
-    assert os.path.exists(hdf5_path), "HDF5 file not found in zip archive."
-    assert os.path.exists(csv_path), "CSV file not found in zip archive."
-    
-    # Load the dataset
-    dataset = HDF5CSVLoader(hdf5_path=hdf5_path, csv_path=csv_path)
-
-    return dataset
 
 
-def model_fn(model_dir):
+def load_model(model_dir):
     model = DeepSeq.from_hparams(
         dim=1536,
         depth=11,
@@ -140,7 +116,7 @@ def model_fn(model_dir):
     return model
 
 
-def predict_fn(input_object: Dataset, model: object):
+def predict(input_object: Dataset, model: object):
     num_workers = 6
 
     dataloader = DataLoader(
@@ -161,46 +137,45 @@ def predict_fn(input_object: Dataset, model: object):
     return result_df
 
 
-def output_fn(prediction, accept):
-    """Serializes the prediction output to CSV if the requested content type is 'text/csv'."""
-    assert accept == "text/csv", "Only 'text/csv' content type is supported."
-    
-    # Assuming 'prediction' is a DataFrame
-    csv_buffer = io.StringIO()
-    prediction.to_csv(csv_buffer, index=False)
-    csv_buffer.seek(0)  # Rewind the buffer
-    return csv_buffer.getvalue(), "text/csv"
+def recreate_tensor(binary_tensor, shape):
+    return torch.from_numpy(np.frombuffer(str(binary_tensor), dtype=np.float64).reshape(shape))
 
 
+def read_to_torch(item):
+    """Convert 'input' binary data in a dictionary to a PyTorch tensor."""
+    item['input'] = recreate_tensor(item['input'], [1, 16384, 5])
+    # item['target'] = recreate_tensor(item['target'], [1])
+    # item['weight'] = recreate_tensor(item['weight'], [1])
+
+    # Return the item with the updated 'input'
+    return item
+
+def load_input():
+    # Can also use https://pytorch.org/data/main/generated/torchdata.datapipes.iter.TFRecordLoader.html instead
+
+    tfrecord_path = "./inference/data/dataset.tfrecord"
+
+    index_path = None
+    description = {
+        'input': "byte",
+        'target': "byte",
+        'weight': "byte",
+        'chr_name': "byte",
+        'start': "int",
+        'end': "int",
+        'cell_line': "byte",
+    }
+    dataset = TFRecordDataset(tfrecord_path, index_path, description)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=1)
+
+    return loader
 
 def main():
-    # Example of directly using paths, could also use environment variables
-    model_dir = "/opt/ml/model"
-    input_path = "/opt/ml/input/data.zip"  # Simulate a path you'd get in SageMaker
-    output_path = "/opt/ml/output/result.csv"  # Simulate an output path
 
-    # Load the model
-    model = model_fn(model_dir)
+    data = next(iter(load_input()))
 
-    # For simplicity, assume input is directly a file; adjust as needed
-    with open(input_path, 'rb') as f:
-        payload = f.read()
 
-    # Simulate the content type SageMaker would provide; adjust as necessary
-    request_content_type = "application/zip"
-    dataset = input_fn(payload, request_content_type)
-
-    # Make predictions
-    predictions = predict_fn(dataset, model)
-
-    # Serialize predictions to CSV format
-    output, content_type = output_fn(predictions, "text/csv")
-
-    # Save or print the output
-    with open(output_path, 'w') as f:
-        f.write(output)
-
-    print(f"Output written to {output_path}")
-
+    print(torch.from_numpy(np.frombuffer(data["input"], dtype=np.float64).reshape(1, 16384, 5)).shape)
+    
 if __name__ == "__main__":
     main()
