@@ -3,28 +3,21 @@
 #     --body fileb://$file_name \
 #     output_file.txt
 
-import io
 import os
 
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from dataloader import EnhancedTFRecordDataset
+from deepseq import DeepSeq
 from torch.utils.data import DataLoader, Dataset
-
-import numpy as np
-from tfrecord.torch.dataset import TFRecordDataset
-
-
-from inference.deepseq import DeepSeq
-from torchdata.datapipes.iter import FileLister, FileOpener, TFRecordLoader, Mapper
-
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # tmpdir = "/tmp/"
 tmpdir = "data"
 
-def get_predictions(model, device: torch.device, val_loader: DataLoader):
+
+def get_predictions(model, device: torch.device, val_loader):
     model.eval()
 
     result = []
@@ -32,13 +25,13 @@ def get_predictions(model, device: torch.device, val_loader: DataLoader):
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
             inputs, targets, weights, chr_name, start, end, cell_line = (
-                batch[0],
-                batch[1],
-                batch[2],
-                batch[3],
-                batch[4],
-                batch[5],
-                batch[6],
+                batch["input"],
+                batch["target"],
+                batch["weight"],
+                batch["chr_name"],
+                batch["start"],
+                batch["end"],
+                batch["cell_line"],
             )
 
             inputs, targets, weights = (
@@ -57,18 +50,21 @@ def get_predictions(model, device: torch.device, val_loader: DataLoader):
 
             # Add to result
 
-            result.append(
-                [
-                    chr_name,
-                    start,
-                    end,
-                    cell_line,
-                    targets.cpu().numpy(),
-                    predicted.cpu().numpy(),
-                    weights.cpu().numpy(),
-                    loss_val,
-                ]
-            )
+            for i in range(predicted.shape[0]):
+                result.append(
+                    [
+                        chr_name[i],
+                        start[i].item(),
+                        end[i].item(),
+                        cell_line[i],
+                        targets[i].cpu().item(),
+                        predicted[i].cpu().item(),
+                        weights[i].cpu().item(),
+                        loss_val,
+                    ]
+                )
+            if batch_idx == 5:
+                break
 
     result_df = pd.DataFrame(
         result,
@@ -87,7 +83,6 @@ def get_predictions(model, device: torch.device, val_loader: DataLoader):
     return result_df
 
 
-
 def load_model(model_dir):
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -101,7 +96,7 @@ def load_model(model_dir):
 
     # model = transfer_enformer_weights_to_(model, transformer_only=True)
     state_dict = torch.load(
-        os.path.join(model_dir, "pretrained_weights.pth"), map_location=device
+        os.path.join(model_dir, "pretrained_weight.pth"), map_location=device
     )
     modified_state_dict = {
         key.replace("_orig_mod.", ""): value for key, value in state_dict.items()
@@ -117,15 +112,13 @@ def load_model(model_dir):
 
 
 def predict(input_object: Dataset, model: object):
-    num_workers = 6
-
     dataloader = DataLoader(
         input_object,
         batch_size=8,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=0,
         drop_last=False,
-        pin_memory=True
+        pin_memory=True,
     )
 
     result_df = get_predictions(
@@ -137,45 +130,24 @@ def predict(input_object: Dataset, model: object):
     return result_df
 
 
-def recreate_tensor(binary_tensor, shape):
-    return torch.from_numpy(np.frombuffer(str(binary_tensor), dtype=np.float64).reshape(shape))
-
-
-def read_to_torch(item):
-    """Convert 'input' binary data in a dictionary to a PyTorch tensor."""
-    item['input'] = recreate_tensor(item['input'], [1, 16384, 5])
-    # item['target'] = recreate_tensor(item['target'], [1])
-    # item['weight'] = recreate_tensor(item['weight'], [1])
-
-    # Return the item with the updated 'input'
-    return item
-
-def load_input():
-    # Can also use https://pytorch.org/data/main/generated/torchdata.datapipes.iter.TFRecordLoader.html instead
-
-    tfrecord_path = "./inference/data/dataset.tfrecord"
+if __name__ == "__main__":
+    tfrecord_path = "./data/dataset.tfrecord"
 
     index_path = None
     description = {
-        'input': "byte",
-        'target': "byte",
-        'weight': "byte",
-        'chr_name': "byte",
-        'start': "int",
-        'end': "int",
-        'cell_line': "byte",
+        "input": "byte",
+        "target": "byte",
+        "weight": "byte",
+        "chr_name": "byte",
+        "start": "int",
+        "end": "int",
+        "cell_line": "byte",
     }
-    dataset = TFRecordDataset(tfrecord_path, index_path, description)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1)
+    dataset = EnhancedTFRecordDataset(tfrecord_path, index_path, description)
 
-    return loader
+    model_dir = "model"
+    model = load_model(model_dir)
 
-def main():
+    result_df = predict(dataset, model)
 
-    data = next(iter(load_input()))
-
-
-    print(torch.from_numpy(np.frombuffer(data["input"], dtype=np.float64).reshape(1, 16384, 5)).shape)
-    
-if __name__ == "__main__":
-    main()
+    print(result_df)
