@@ -64,6 +64,7 @@ class HyperParams:
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
+
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -81,6 +82,10 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
 
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
+
+
+    num_tfs = 1
+    
     ############ DEVICE ############
 
     # Check for CUDA availability
@@ -123,7 +128,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         nn.Linear(model.dim * 2, 1),
         # PrintShape(name="Linear"),
         Rearrange("... () -> ..."),
-        nn.Linear(512, 2),
+        nn.Linear(512, num_tfs),
     )
 
     for param in model.parameters():
@@ -157,6 +162,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         bed_file=os.path.join(data_dir, "tf.tsv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
@@ -177,6 +183,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         bed_file=os.path.join(data_dir, "tf.tsv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
         return_augs=False,
         rc_aug=False,
         context_length=16_384,

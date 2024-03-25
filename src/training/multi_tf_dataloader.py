@@ -280,6 +280,7 @@ class TFIntervalDataset(Dataset):
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
         mode="train",
+        num_tfs=2,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -295,6 +296,7 @@ class TFIntervalDataset(Dataset):
         df = pl.read_csv(str(bed_path), separator="\t")
         df = filter_df_fn(df)
         self.df = df
+        self.num_tfs= num_tfs
 
         self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
         self.return_augs = return_augs
@@ -317,7 +319,7 @@ class TFIntervalDataset(Dataset):
         label = ast.literal_eval(label)
         score = ast.literal_eval(score)
 
-        labels_tensor = torch.zeros(len(label))
+        labels_tensor = torch.zeros(self.num_tfs)
         for i, item in enumerate(label.items()):
             if item[1] == None:
                 labels_tensor[i] = -1
@@ -327,7 +329,7 @@ class TFIntervalDataset(Dataset):
                 labels_tensor[i] = 0
 
 
-        score_tensor = torch.zeros(len(score))
+        score_tensor = torch.zeros(self.num_tfs)
         for i, item in enumerate(score.items()):
             score_tensor[i] = item[1]
         
