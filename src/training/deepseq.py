@@ -23,7 +23,7 @@ TARGET_LENGTH = 896
 # solution came from @johahi
 
 DIR = Path(os.environ.get("SM_CHANNEL_TRAINING", Path(__file__).parents[0]))
-TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
+# TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
 
 # helpers
 
@@ -150,11 +150,7 @@ def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
-        (
-            get_positional_features_gamma
-            if not use_tf_gamma
-            else always(TF_GAMMAS.to(device))
-        ),
+        get_positional_features_gamma,
     ]
 
     num_components = len(feature_functions) * 2

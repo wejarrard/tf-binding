@@ -10,7 +10,7 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from data_tf_weighted import TFIntervalDataset
+from multi_tf_dataloader import TFIntervalDataset
 from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
@@ -97,7 +97,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ MODEL ############
 
-    num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
+    num_cell_lines = 33
 
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -123,7 +123,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         nn.Linear(model.dim * 2, 1),
         # PrintShape(name="Linear"),
         Rearrange("... () -> ..."),
-        nn.Linear(512, 1),
+        nn.Linear(512, 2),
     )
 
     for param in model.parameters():
@@ -154,7 +154,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_train"),
+        bed_file=os.path.join(data_dir, "tf.tsv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -174,7 +174,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_val"),
+        bed_file=os.path.join(data_dir, "tf.tsv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
