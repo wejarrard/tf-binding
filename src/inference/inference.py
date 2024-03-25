@@ -43,6 +43,9 @@ def get_predictions(model, device: torch.device, val_loader):
             outputs = model(inputs)
             loss = F.binary_cross_entropy_with_logits(outputs, targets)
 
+            # Get sigmoid transformed outputs
+            outputs = torch.sigmoid(outputs)
+
             loss_val = loss.item()
 
             # Calculate accuracy
@@ -61,9 +64,10 @@ def get_predictions(model, device: torch.device, val_loader):
                         predicted[i].cpu().item(),
                         weights[i].cpu().item(),
                         loss_val,
+                        outputs[i].cpu().item(),
                     ]
                 )
-            if batch_idx == 5:
+            if batch_idx == 20:
                 break
 
     result_df = pd.DataFrame(
@@ -77,6 +81,7 @@ def get_predictions(model, device: torch.device, val_loader):
             "predicted",
             "weights",
             "loss",
+            "probabilities",
         ],
     )
 
@@ -114,7 +119,7 @@ def load_model(model_dir):
 def predict(input_object: Dataset, model: object):
     dataloader = DataLoader(
         input_object,
-        batch_size=8,
+        batch_size=2,
         shuffle=False,
         num_workers=0,
         drop_last=False,

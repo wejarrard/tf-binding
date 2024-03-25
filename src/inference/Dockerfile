@@ -1,4 +1,6 @@
-FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-devel
+# Use the slim version of Python 3.10 as the base image
+FROM python:3.10-slim
+# FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-devel
 # Install gcc to compile any extensions
 RUN apt-get update && apt-get install -y gcc
 
