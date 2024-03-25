@@ -194,6 +194,22 @@ class Residual(nn.Module):
         return self.fn(x, **kwargs) + x
 
 
+class ReLU(nn.Module):
+    __constants__ = ["inplace"]
+    inplace: bool
+
+    def __init__(self, inplace: bool = False):
+        super().__init__()
+        self.inplace = inplace
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return F.relu(input, inplace=self.inplace)
+
+    def extra_repr(self) -> str:
+        inplace_str = "inplace=True" if self.inplace else ""
+        return inplace_str
+
+
 class GELU(nn.Module):
     def forward(self, x):
         return torch.sigmoid(1.702 * x) * x
@@ -426,7 +442,7 @@ class DeepSeq(PreTrainedModel):
                             nn.LayerNorm(config.dim),
                             nn.Linear(config.dim, config.dim * 2),
                             nn.Dropout(config.dropout_rate),
-                            nn.ReLU(),
+                            ReLU(),
                             nn.Linear(config.dim * 2, config.dim),
                             nn.Dropout(config.dropout_rate),
                         )

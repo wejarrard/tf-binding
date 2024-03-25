@@ -8,13 +8,12 @@ import os
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from captum.attr import DeepLift
 from dataloader import EnhancedTFRecordDataset
 from deepseq import DeepSeq
 from torch.utils.data import DataLoader, Dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# tmpdir = "/tmp/"
-tmpdir = "data"
 
 
 def get_predictions(model, device: torch.device, val_loader):
@@ -40,13 +39,19 @@ def get_predictions(model, device: torch.device, val_loader):
                 weights.to(device),
             )
 
-            outputs = model(inputs)
-            loss = F.binary_cross_entropy_with_logits(outputs, targets)
+            baselines = torch.zeros_like(inputs)
 
+            dl = DeepLift(model)
+
+            attributions = dl.attribute(
+                inputs=inputs,
+                baselines=baselines,
+                target=0,  # targets.squeeze().type(torch.int64),
+                # return_convergence_delta=True,
+            )
+            outputs = model(inputs)
             # Get sigmoid transformed outputs
             outputs = torch.sigmoid(outputs)
-
-            loss_val = loss.item()
 
             # Calculate accuracy
             predicted = (outputs.data > 0.5).float()
@@ -63,8 +68,9 @@ def get_predictions(model, device: torch.device, val_loader):
                         targets[i].cpu().item(),
                         predicted[i].cpu().item(),
                         weights[i].cpu().item(),
-                        loss_val,
                         outputs[i].cpu().item(),
+                        inputs,
+                        attributions,
                     ]
                 )
             if batch_idx == 20:
@@ -80,8 +86,9 @@ def get_predictions(model, device: torch.device, val_loader):
             "targets",
             "predicted",
             "weights",
-            "loss",
             "probabilities",
+            "inputs",
+            "attributions",
         ],
     )
 
@@ -108,9 +115,6 @@ def load_model(model_dir):
     }
     model.load_state_dict(modified_state_dict)
 
-    for param in model.parameters():
-        param.requires_grad = False
-
     model.to(device)
 
     return model
@@ -119,7 +123,7 @@ def load_model(model_dir):
 def predict(input_object: Dataset, model: object):
     dataloader = DataLoader(
         input_object,
-        batch_size=2,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
         drop_last=False,

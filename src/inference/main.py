@@ -56,7 +56,7 @@ async def get_inference(file: UploadFile):
 
     # Create a CSV from DataFrame
     response = StreamingResponse(
-        io.StringIO(result_df.to_csv(index=False)), media_type="text/csv"
+        io.StringIO(result_df.to_csv(index=False, sep="\t")), media_type="text/csv"
     )
     response.headers["Content-Disposition"] = "attachment; filename=export.csv"
     response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
