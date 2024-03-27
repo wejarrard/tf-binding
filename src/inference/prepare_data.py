@@ -8,7 +8,7 @@ import torch.multiprocessing
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from training.data_tf_weighted import TFIntervalDataset
+from training.multi_tf_dataloader import TFIntervalDataset
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 
