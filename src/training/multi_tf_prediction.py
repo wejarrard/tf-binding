@@ -159,7 +159,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "tf.tsv"),
+        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_train"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -180,7 +180,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "tf.tsv"),
+        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,

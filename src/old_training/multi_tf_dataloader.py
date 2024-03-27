@@ -10,7 +10,8 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
+import ast
 
 # helper functions
 
@@ -279,6 +280,7 @@ class TFIntervalDataset(Dataset):
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
         mode="train",
+        num_tfs=2,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -291,9 +293,10 @@ class TFIntervalDataset(Dataset):
         bed_path = Path(bed_file)
         assert bed_path.exists(), "path to .bed file must exist"
 
-        df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
+        df = pl.read_csv(str(bed_path), separator="\t")
         df = filter_df_fn(df)
         self.df = df
+        self.num_tfs= num_tfs
 
         self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
         self.return_augs = return_augs
@@ -312,19 +315,36 @@ class TFIntervalDataset(Dataset):
         )
         self.mode = mode
 
-    def one_hot_encode_(self, label: str) -> torch.Tensor:
-        """
-        returns 1 or 0 for value, with an extra dimension using einops
-        """
-        return (
-            torch.tensor([1], dtype=torch.float32)
-            if label == "Positive"
-            else torch.tensor([0], dtype=torch.float32)
-        )
+    def process_tfs(self, score, label):# -> tuple[torch.Tensor, torch.Tensor]:
+        label = ast.literal_eval(label)
+        score = ast.literal_eval(score)
+
+        labels_tensor = torch.zeros(self.num_tfs)
+        for i, item in enumerate(label.items()):
+            if item[1] == None:
+                labels_tensor[i] = -1
+            elif item[1] == True:
+                labels_tensor[i] = 1
+            else:
+                labels_tensor[i] = 0
+
+
+        score_tensor = torch.zeros(self.num_tfs)
+        for i, item in enumerate(score.items()):
+            score_tensor[i] = item[1]
+        
+
+        return score_tensor, labels_tensor
+        
+            
+
+        # get
+        
+        
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label, score = (
+        chr_name, start, end, cell_line, score, label = (
             interval[0],
             interval[1],
             interval[2],
@@ -334,9 +354,8 @@ class TFIntervalDataset(Dataset):
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        label_encoded = self.one_hot_encode_(label)
+        score, label_encoded = self.process_tfs(score, label)
 
-        score = torch.tensor([score])
 
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
         if self.mode == "train":
@@ -346,6 +365,18 @@ class TFIntervalDataset(Dataset):
                 ),
                 label_encoded,
                 score,
+            )
+        elif self.mode == "inference":
+            return (
+                self.processor(
+                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
+                ),
+                label_encoded,
+                score,
+                chr_name,
+                start,
+                end,
+                cell_line,
             )
         else:
             return (
@@ -357,3 +388,30 @@ class TFIntervalDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
+
+
+if __name__ == "__main__":
+    data_dir = "./data"
+    train_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "tf.tsv"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        return_augs=False,
+        rc_aug=True,
+        shift_augs=(-50, 50),
+        context_length=16_384,
+        mode="train",
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=2,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
+    )
+
+    for i, data in enumerate(train_loader):
+        inputs, targets, weights = data[0], data[1], data[2]
+        print(inputs.shape, targets.shape, weights.shape)

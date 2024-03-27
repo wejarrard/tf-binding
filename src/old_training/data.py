@@ -1,4 +1,3 @@
-import os
 import time
 from pathlib import Path
 from random import random, randrange
@@ -8,9 +7,9 @@ import polars as pl
 import pysam
 import torch
 import torch.nn.functional as F
-from einops import rearrange
 from pyfaidx import Fasta
 from torch.utils.data import Dataset
+import os
 
 # helper functions
 
@@ -270,7 +269,7 @@ class GenomicInterval:
         return extended_data, rand_shift_tensor, rand_aug_bool_tensor
 
 
-class TFIntervalDataset(Dataset):
+class GenomeIntervalDataset(Dataset):
     def __init__(
         self,
         bed_file,
@@ -278,7 +277,6 @@ class TFIntervalDataset(Dataset):
         cell_lines_dir,
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
-        mode="train",
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -310,50 +308,86 @@ class TFIntervalDataset(Dataset):
             [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
             key=lambda x: x,
         )
-        self.mode = mode
+        # self.label_folders = ["positive", "negative"]
 
-    def one_hot_encode_(self, label: str) -> torch.Tensor:
+    def one_hot_encode_(self, labels):
         """
-        returns 1 or 0 for value, with an extra dimension using einops
+        One hot encodes the labels using the pre-initialized list of folders
         """
-        return (
-            torch.tensor([1], dtype=torch.float32)
-            if label == "Positive"
-            else torch.tensor([0], dtype=torch.float32)
-        )
+        labels_list = labels.split(",")
+
+        labels_tensor = torch.zeros(len(self.label_folders))
+
+        for i, folder in enumerate(self.label_folders):
+            if folder in labels_list:
+                labels_tensor[i] = 1
+        return labels_tensor
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label, score = (
+        chr_name, start, end, cell_line, labels = (
             interval[0],
             interval[1],
             interval[2],
             interval[3],
             interval[4],
-            interval[5],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        label_encoded = self.one_hot_encode_(label)
-
-        score = torch.tensor([score])
+        labels_encoded = self.one_hot_encode_(labels)
 
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
-        if self.mode == "train":
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-                score,
-            )
-        else:
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-            )
+
+        return (
+            self.processor(
+                chr_name, start, end, pileup_dir, return_augs=self.return_augs
+            ),
+            labels_encoded,
+            ind
+        )
 
     def __len__(self):
         return len(self.df)
+
+
+class MaskedGenomeIntervalDataset(GenomeIntervalDataset):
+    def __init__(self, mask_prob=0.15, *args, **kwargs):
+        super(MaskedGenomeIntervalDataset, self).__init__(*args, **kwargs)
+        self.mask_prob = mask_prob
+
+    def __getitem__(self, index):
+        seq, labels = super(MaskedGenomeIntervalDataset, self).__getitem__(index)
+
+        # Mask the sequence and get the labels
+        masked_seq, _ = mask_sequence(seq, mask_prob=self.mask_prob)
+
+        return masked_seq, labels
+
+
+if __name__ == "__main__":
+    data_dir = "./"
+    # torch.manual_seed(42)
+
+    dataset = GenomeIntervalDataset(
+        bed_file=os.path.join(data_dir, "combined.bed"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        return_augs=False,
+        rc_aug=False,
+        shift_augs=(-3, 3),
+        context_length=16_384,
+    )
+
+    random_index = torch.randint(0, len(dataset), (1,)).item()
+    extended_data = dataset[random_index]
+
+    print("Extended Data:")
+    print(extended_data)
+
+    # Assuming extended_data[0] is your tensor
+    fifth_column = extended_data[0][:, 4]
+
+    # Finding the maximum value in the 5th column
+    max_value = torch.max(fifth_column)
+
+    print(max_value)

@@ -10,7 +10,7 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from data_tf_weighted import TFIntervalDataset
+from multi_tf_dataloader import TFIntervalDataset
 from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
@@ -64,6 +64,7 @@ class HyperParams:
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
+
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -81,6 +82,10 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
 
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
+
+
+    num_tfs = 2
+    
     ############ DEVICE ############
 
     # Check for CUDA availability
@@ -95,21 +100,9 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         else:
             device = torch.device("cuda")
 
-        # Checking GPU compatibility
-        gpu_ok = torch.cuda.get_device_capability() in (
-            (7, 0),
-            (8, 0),
-            (9, 0),
-        )
-
-        if not gpu_ok:
-            print(
-                "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected."
-            )
-
     ############ MODEL ############
 
-    num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
+    num_cell_lines = 33
 
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -135,7 +128,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         nn.Linear(model.dim * 2, 1),
         # PrintShape(name="Linear"),
         Rearrange("... () -> ..."),
-        nn.Linear(512, 1),
+        nn.Linear(512, num_tfs),
     )
 
     for param in model.parameters():
@@ -166,9 +159,10 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_train"),
+        bed_file=os.path.join(data_dir, "FOXA1_AR_train"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
@@ -186,9 +180,10 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_val"),
+        bed_file=os.path.join(data_dir, "FOXA1_AR_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
         return_augs=False,
         rc_aug=False,
         context_length=16_384,
