@@ -28,7 +28,7 @@ def _string_feature_list(values):
     """Returns a bytes_list from a list of strings."""
     # Encode each string in the list into bytes and create a BytesList
     return tf.train.Feature(
-        bytes_list=tf.train.BytesList(value=[v.encode() for v in values])
+        bytes_list=tf.train.BytesList(value=[v[0].encode() for v in values])
     )
 
 
@@ -44,7 +44,7 @@ def main() -> None:
     tfrecords_filename = os.path.join(output_dir, "dataset.tfrecord")
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak_val"),
+        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,

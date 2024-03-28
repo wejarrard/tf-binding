@@ -320,18 +320,18 @@ class TFIntervalDataset(Dataset):
         score = ast.literal_eval(score)
         tf_list = []
         labels_tensor = torch.zeros(self.num_tfs)
-        for i, item in enumerate(label.items()):
-            tf_list.append(item[0])
-            if item[1] == None:
+        for i, (key, value) in enumerate(label.items()):
+            tf_list.append(key)
+            if value == None:
                 labels_tensor[i] = -1
-            elif item[1] == True:
+            elif value == True:
                 labels_tensor[i] = 1
             else:
                 labels_tensor[i] = 0
 
         score_tensor = torch.zeros(self.num_tfs)
-        for i, item in enumerate(score.items()):
-            score_tensor[i] = item[1]
+        for i, value in enumerate(score.values()):
+            score_tensor[i] = value
 
         return score_tensor, labels_tensor, tf_list
 
