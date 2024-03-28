@@ -48,7 +48,11 @@ async def get_inference(file: UploadFile):
         "cell_line": "byte",
     }
     dataset = EnhancedTFRecordDataset(
-        data_path, index_path, description, compression_type="gzip"
+        data_path=data_path,
+        index_path=index_path,
+        description=description,
+        compression_type="gzip",
+        num_tfs=1,
     )
 
     # Get predictions

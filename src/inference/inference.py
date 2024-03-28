@@ -31,6 +31,7 @@ def get_predictions(model, device: torch.device, val_loader):
                 batch["start"],
                 batch["end"],
                 batch["cell_line"],
+                batch["tf_list"],
             )
 
             inputs, targets, weights = (
@@ -65,10 +66,10 @@ def get_predictions(model, device: torch.device, val_loader):
                         start[i].item(),
                         end[i].item(),
                         cell_line[i],
-                        targets[i].cpu().item(),
-                        predicted[i].cpu().item(),
-                        weights[i].cpu().item(),
-                        outputs[i].cpu().item(),
+                        targets[i].cpu(),
+                        predicted[i].cpu(),
+                        weights[i].cpu(),
+                        outputs[i].cpu(),
                         inputs,
                         attributions,
                     ]

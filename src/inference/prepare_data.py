@@ -24,6 +24,14 @@ def _string_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value.encode()]))
 
 
+def _string_feature_list(values):
+    """Returns a bytes_list from a list of strings."""
+    # Encode each string in the list into bytes and create a BytesList
+    return tf.train.Feature(
+        bytes_list=tf.train.BytesList(value=[v.encode() for v in values])
+    )
+
+
 def _int64_feature(value):
     """Returns an int64_list from a bool / enum / int / uint."""
     value = int(value.item())
@@ -71,6 +79,7 @@ def main() -> None:
                 "start": _int64_feature(item[4]),
                 "end": _int64_feature(item[5]),
                 "cell_line": _string_feature(item[6][0]),
+                "tf_list": _string_feature_list(item[7]),
             }
 
             # Create an example protocol buffer

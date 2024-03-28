@@ -318,9 +318,10 @@ class TFIntervalDataset(Dataset):
     def process_tfs(self, score, label):  # -> tuple[torch.Tensor, torch.Tensor]:
         label = ast.literal_eval(label)
         score = ast.literal_eval(score)
-
+        tf_list = []
         labels_tensor = torch.zeros(self.num_tfs)
         for i, item in enumerate(label.items()):
+            tf_list.append(item[0])
             if item[1] == None:
                 labels_tensor[i] = -1
             elif item[1] == True:
@@ -332,7 +333,7 @@ class TFIntervalDataset(Dataset):
         for i, item in enumerate(score.items()):
             score_tensor[i] = item[1]
 
-        return score_tensor, labels_tensor
+        return score_tensor, labels_tensor, tf_list
 
         # get
 
@@ -348,7 +349,7 @@ class TFIntervalDataset(Dataset):
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        score, label_encoded = self.process_tfs(score, label)
+        score, label_encoded, tf_list = self.process_tfs(score, label)
 
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
         if self.mode == "train":
@@ -358,6 +359,7 @@ class TFIntervalDataset(Dataset):
                 ),
                 label_encoded,
                 score,
+                tf_list,
             )
         elif self.mode == "inference":
             return (
@@ -370,6 +372,7 @@ class TFIntervalDataset(Dataset):
                 start,
                 end,
                 cell_line,
+                tf_list,
             )
         else:
             return (
@@ -377,6 +380,7 @@ class TFIntervalDataset(Dataset):
                     chr_name, start, end, pileup_dir, return_augs=self.return_augs
                 ),
                 label_encoded,
+                tf_list,
             )
 
     def __len__(self):

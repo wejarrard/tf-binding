@@ -7,8 +7,9 @@ from torch.utils.data import DataLoader
 
 
 class EnhancedTFRecordDataset(TFRecordDataset):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, num_tfs=2, *args, **kwargs):
         super(EnhancedTFRecordDataset, self).__init__(*args, **kwargs)
+        self.num_tfs = num_tfs
 
     def __iter__(self):
         # Get the iterator from the parent class
@@ -32,8 +33,8 @@ class EnhancedTFRecordDataset(TFRecordDataset):
     def process(self, item):
         """Convert 'input', 'target', and 'weight' binary data in a dictionary to PyTorch tensors."""
         item["input"] = self.recreate_tensor(item["input"], [16384, 5])
-        item["target"] = self.recreate_tensor(item["target"], [1])
-        item["weight"] = self.recreate_tensor(item["weight"], [1])
+        item["target"] = self.recreate_tensor(item["target"], [self.num_tfs])
+        item["weight"] = self.recreate_tensor(item["weight"], [self.num_tfs])
 
         item["chr_name"] = item["chr_name"].decode()
         item["cell_line"] = item["cell_line"].decode()
