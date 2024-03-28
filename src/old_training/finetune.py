@@ -1,14 +1,16 @@
-from contextlib import contextmanager
-from copy import deepcopy
+import torch
 from typing import Optional
 
-import torch
+from copy import deepcopy
+from contextlib import contextmanager
 import torch.nn.functional as F
-from discrete_key_value_bottleneck_pytorch import DiscreteKeyValueBottleneck
+from torch import nn, einsum
+
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from enformer_pytorch.modeling_enformer import Enformer, poisson_loss
-from torch import einsum, nn
+
+from discrete_key_value_bottleneck_pytorch import DiscreteKeyValueBottleneck
 
 
 def exists(val):

@@ -1,22 +1,22 @@
 # pretrain.py
-# pretrain.py
 import argparse
 import os
 import warnings
+from ast import Tuple
 from collections import defaultdict
 from dataclasses import dataclass
 
-import polars as pl
 import pysam
 import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from dataloaders.tf import ValidationGenomeIntervalDataset
+from data_tf import GenomeIntervalDataset, ValidationGenomeIntervalDataset
+from deepseq import DeepSeq
 from einops.layers.torch import Rearrange
-from models.deepseq import DeepSeq
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
+from training_utils import count_directories
 
 seed_value = 42
 torch.manual_seed(seed_value)
@@ -237,7 +237,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ############ DATA ############
 
     dataset = ValidationGenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_all_broadPeak"),
+        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -246,11 +246,11 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         context_length=16_384,
     )
 
-#     total_size = len(dataset)
-#     valid_size = 20_000
-#     train_size = total_size - valid_size
+    total_size = len(dataset)
+    valid_size = 20_000
+    train_size = total_size - valid_size
 
-#     train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
 
     if torch.cuda.device_count() >= 1:
         num_workers = 6
@@ -261,14 +261,14 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     if DISTRIBUTED:
         valid_sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset,
+            valid_dataset,
             num_replicas=dist.get_world_size(),
             rank=dist.get_rank(),
             shuffle=False,
             drop_last=True,
         )
         valid_loader = DataLoader(
-            dataset,
+            valid_dataset,
             batch_size=hyperparams.batch_size,
             sampler=valid_sampler,
             num_workers=num_workers,
@@ -277,7 +277,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         )
     else:
         valid_loader = DataLoader(
-            dataset,
+            valid_dataset,
             batch_size=hyperparams.batch_size,
             shuffle=False,
             num_workers=num_workers,

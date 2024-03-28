@@ -48,23 +48,3 @@ class EarlyStopping:
                 print(
                     f"Validation loss decreased to {val_loss:.6f}, model saved to {self.save_path}"
                 )
-
-    def state_dict(self):
-        """Returns the state of the EarlyStopping instance."""
-        return {
-            "patience": self.patience,
-            "verbose": self.verbose,
-            "patience_counter": self.patience_counter,
-            "best_loss": self.best_loss,
-            "delta": self.delta,
-            "save_path": self.save_path,
-        }
-
-    def load_state_dict(self, state_dict):
-        """Loads the EarlyStopping state."""
-        self.patience = state_dict["patience"]
-        self.verbose = state_dict["verbose"]
-        self.patience_counter = state_dict["patience_counter"]
-        self.best_loss = state_dict["best_loss"]
-        self.delta = state_dict["delta"]
-        self.save_path = state_dict["save_path"]

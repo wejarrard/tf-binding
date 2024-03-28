@@ -1,33 +1,17 @@
 import os
-from tabnanny import check
 from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
 from enformer_pytorch import Enformer
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
-from utils.checkpointing import save_checkpoint
-from utils.protocols import ScalerProtocol, SchedulerProtocol
+import torch.nn.functional as F
 
-
-def get_params_without_weight_decay_ln(named_params, weight_decay):
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [
-                p for n, p in named_params if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": weight_decay,
-        },
-        {
-            "params": [p for n, p in named_params if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    return optimizer_grouped_parameters
 
 
 def count_directories(path: str) -> int:
@@ -86,37 +70,23 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
     train_loader: DataLoader,
-    epoch: int,
-    hyperparams,
-    early_stopping,
-    scaler: Optional[ScalerProtocol] = None,
-    scheduler: Optional[SchedulerProtocol] = None,
-    current_batch: int = 0,
-    max_grad_norm: float = 0.2,
-    log_frequency: int = 1000,
-    checkpointing=True,
-    total_loss=None,
-    correct_predictions=None,
-    total_predictions=None,
-) -> Tuple[float, float]:
+    scaler: Optional[GradScaler] = None,
+    scheduler: Optional[LRScheduler] = None,
+) -> Tuple[float, float]:  # Returns both average loss and accuracy
     model.train()
 
-    if not total_loss:
-        total_loss = 0.0
-    if not correct_predictions:
-        correct_predictions = 0
-    if not total_predictions:
-        total_predictions = 0
+    total_loss = 0.0
+    correct_predictions = 0
+    total_predictions = 0
 
     # Check if distributed training is initialized
     is_distributed = torch.distributed.is_initialized()
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for batch_idx, batch in enumerate(train_loader):
-        if batch_idx < current_batch:
-            continue
-        inputs, targets, data_inds = batch[0], batch[1], batch[2]
-        inputs, targets = inputs.to(device), targets.to(device)
+        inputs, targets, weights = batch[0], batch[1], batch[2]
+
+        inputs, targets, weights = inputs.to(device), targets.to(device), weights.to(device)
 
         optimizer.zero_grad()
 
@@ -124,17 +94,17 @@ def train_one_epoch(
         if scaler and is_distributed:
             with autocast():
                 outputs = model(inputs)
-                loss = criterion(outputs, targets)
+                loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            clip_grad_norm_(model.parameters(), max_norm=0.2)
             scaler.step(optimizer)
             scaler.update()
         else:
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
             loss.backward()
-            clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            clip_grad_norm_(model.parameters(), max_norm=0.2)
 
         # Step the optimizer
         optimizer.step()
@@ -159,26 +129,11 @@ def train_one_epoch(
         total_predictions += targets.numel()
 
         if rank == 0:
-            if batch_idx % log_frequency == 0 and batch_idx != 0:
+
+            if batch_idx % 500 == 0 and batch_idx != 0:
                 print(
-                    f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} |"
-                    + f"LR: {scheduler.get_last_lr()[0]:.8f}"
-                    if scheduler
-                    else ""
+                    f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} | LR: {scheduler.get_last_lr()[0]:.8f}"
                 )
-                if checkpointing:
-                    save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        early_stopping=early_stopping,
-                        epoch=epoch,
-                        hyperparams=hyperparams,
-                        total_loss=total_loss,
-                        correct_predictions=correct_predictions,
-                        total_predictions=total_predictions,
-                        current_batch=batch_idx,
-                    )
 
     average_loss = total_loss / len(train_loader)
     accuracy = correct_predictions / total_predictions * 100
@@ -191,7 +146,7 @@ def validate_one_epoch(
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,
-) -> Tuple[float, float]:
+) -> Tuple[float, float]:  # Returns both average loss and accuracy
     model.eval()
     total_loss = 0.0
     correct_predictions = 0
@@ -202,14 +157,12 @@ def validate_one_epoch(
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, data_inds = (
-                batch[0].to(device),
-                batch[1].to(device),
-                batch[2],
-            )
+            inputs, targets, weights = batch[0], batch[1], batch[2]
+
+            inputs, targets, weights = inputs.to(device), targets.to(device), weights.to(device)
 
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
 
             # Calculate and collect loss across all nodes
             if is_distributed:

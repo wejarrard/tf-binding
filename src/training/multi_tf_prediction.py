@@ -5,17 +5,19 @@ import warnings
 from dataclasses import dataclass
 from multiprocessing import cpu_count
 
-from enformer_pytorch import Enformer
 import pysam
 import torch
 import torch._dynamo
-from torch.cpu import is_available
 import torch.distributed as dist
 import torch.nn as nn
+from multi_tf_dataloader import TFIntervalDataset
+from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
+from enformer_pytorch import Enformer
 from finetune import HeadAdapterWrapper
 from loss import FocalLoss
+from torch.cpu import is_available
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
@@ -28,14 +30,11 @@ from training_utils import (
 )
 from transformers import get_linear_schedule_with_warmup
 
-from data import GenomeIntervalDataset
-from deepseq import DeepSeq
-
 seed_value = 42
 torch.manual_seed(seed_value)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed_value)
-    
+
 torch.autograd.set_detect_anomaly(True)
 
 # hide user warning
@@ -65,6 +64,7 @@ class HyperParams:
 
 
 def get_params_without_weight_decay_ln(named_params, weight_decay):
+
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -82,6 +82,10 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
 
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
+
+
+    num_tfs = 1
+    
     ############ DEVICE ############
 
     # Check for CUDA availability
@@ -96,21 +100,9 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         else:
             device = torch.device("cuda")
 
-        # Checking GPU compatibility
-        gpu_ok = torch.cuda.get_device_capability() in (
-            (7, 0),
-            (8, 0),
-            (9, 0),
-        )
-
-        if not gpu_ok:
-            print(
-                "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected."
-            )
-
     ############ MODEL ############
 
-    num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
+    num_cell_lines = 33
 
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -123,9 +115,21 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ).to(device)
 
     # model = transfer_enformer_weights_to_(model, transformer_only=True)
-    state_dict = torch.load(os.path.join(data_dir,'best_model.pth'), map_location=device)
-    modified_state_dict = {key.replace('_orig_mod.module.', ''): value for key, value in state_dict.items()}
+    state_dict = torch.load(
+        os.path.join(data_dir, "pretrained_weights.pth"), map_location=device
+    )
+    modified_state_dict = {
+        key.replace("_orig_mod.module.", ""): value for key, value in state_dict.items()
+    }
     model.load_state_dict(modified_state_dict)
+
+    model.out = nn.Sequential(
+        # PrintShape(name="Head In"),
+        nn.Linear(model.dim * 2, 1),
+        # PrintShape(name="Linear"),
+        Rearrange("... () -> ..."),
+        nn.Linear(512, num_tfs),
+    )
 
     for param in model.parameters():
         param.requires_grad = True
@@ -149,94 +153,51 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ DATA ############
 
-    dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "combined.bed"),
-        fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
-        return_augs=False,
-        rc_aug=True,
-        shift_augs=(-50, 50),
-        context_length=16_384,
-    )
-
-    if torch.cuda.is_available():
-        total_size = len(dataset)
-        valid_size = 20_000
-        train_size = total_size - valid_size
-
-        train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
-    else:
-        # Create a subset of 100 samples from the dataset
-        subset_size = 2
-        subset_indices = torch.randperm(len(dataset))[:subset_size].tolist()
-        subset_dataset = torch.utils.data.Subset(dataset, subset_indices)
-        # Divide the subset into training and validation
-        valid_size = 1  # Set your validation size
-        train_size = subset_size - valid_size
-        train_dataset, valid_dataset = random_split(
-            subset_dataset, [train_size, valid_size]
-        )
-
-    assert (
-        train_size > 0
-    ), f"The dataset only contains {total_size} samples, but {valid_size} samples are required for the validation set."
-
     if torch.cuda.device_count() >= 1:
         num_workers = 6
     else:
         num_workers = 0
 
-    print(f"Using {num_workers} workers")
+    train_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_train"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
+        return_augs=False,
+        rc_aug=True,
+        shift_augs=(-50, 50),
+        context_length=16_384,
+        mode="train",
+    )
 
-    if DISTRIBUTED:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=args.local_rank,
-            drop_last=True    
-        )
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=train_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
 
-        valid_sampler = torch.utils.data.distributed.DistributedSampler(
-            valid_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=dist.get_rank(),
-            shuffle=False,
-            drop_last=True
-        )
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=valid_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
-    else:
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+    valid_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_val"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        num_tfs=num_tfs,
+        return_augs=False,
+        rc_aug=False,
+        context_length=16_384,
+        mode="train",
+    )
 
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
 
     ############ TRAINING PARAMS ############
 
@@ -255,14 +216,16 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     # scaler = GradScaler()
 
     total_steps = len(train_loader) * hyperparams.num_epochs
-    warmup_steps = 50_000 if torch.cuda.is_available() else 0
+    warmup_steps = 1000 if torch.cuda.is_available() else 0
 
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps
     )
 
     early_stopping = EarlyStopping(
-        patience=args.early_stopping_patience, verbose=True, save_path=f"/opt/ml/model/best_model.pth"
+        patience=args.early_stopping_patience,
+        verbose=True,
+        save_path=f"/opt/ml/model/pretrained_weight.pth",
     )
 
     ############ TENSORBOARD ############
@@ -278,7 +241,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         if DISTRIBUTED:
             train_sampler.set_epoch(epoch)
             valid_sampler.set_epoch(epoch)
-            
 
         train_loss, train_acc = train_one_epoch(
             model=model,

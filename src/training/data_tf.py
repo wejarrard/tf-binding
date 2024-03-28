@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 
 # helper functions
 
@@ -270,7 +270,7 @@ class GenomicInterval:
         return extended_data, rand_shift_tensor, rand_aug_bool_tensor
 
 
-class TFIntervalDataset(Dataset):
+class GenomeIntervalDataset(Dataset):
     def __init__(
         self,
         bed_file,
@@ -304,10 +304,6 @@ class TFIntervalDataset(Dataset):
             return_seq_indices=return_seq_indices,
             shift_augs=shift_augs,
             rc_aug=rc_aug,
-        )
-        self.label_folders = sorted(
-            [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
-            key=lambda x: x,
         )
 
     def one_hot_encode_(self, label: str) -> torch.Tensor:
@@ -345,123 +341,3 @@ class TFIntervalDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
-
-
-class ValidationGenomeIntervalDataset(Dataset):
-    def __init__(
-        self,
-        bed_file,
-        fasta_file,
-        cell_lines_dir,
-        filter_df_fn=identity,
-        chr_bed_to_fasta_map=dict(),
-        context_length=None,
-        return_seq_indices=False,
-        shift_augs=None,
-        rc_aug=False,
-        return_augs=False,
-    ):
-        super().__init__()
-
-        # Initialization for GenomeIntervalDataset
-        bed_path = Path(bed_file)
-        assert bed_path.exists(), "path to .bed file must exist"
-
-        df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
-        df = filter_df_fn(df)
-        self.df = df
-
-        self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
-        self.return_augs = return_augs
-        self.cell_lines_dir = Path(cell_lines_dir)
-
-        self.processor = GenomicInterval(
-            fasta_file=fasta_file,
-            context_length=context_length,
-            return_seq_indices=return_seq_indices,
-            shift_augs=shift_augs,
-            rc_aug=rc_aug,
-        )
-
-    def one_hot_encode_(self, label: str) -> torch.Tensor:
-        """
-        returns 1 or 0 for value, with an extra dimension using einops
-        """
-        return (
-            torch.tensor([1], dtype=torch.float32)
-            if label == "Positive"
-            else torch.tensor([0], dtype=torch.float32)
-        )
-
-    def __getitem__(self, ind):
-        interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label = (
-            interval[0],
-            interval[1],
-            interval[2],
-            interval[3],
-            interval[4],
-        )
-        chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
-
-        label_encoded = self.one_hot_encode_(label)
-
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
-
-        return (
-            self.processor(
-                chr_name, start, end, pileup_dir, return_augs=self.return_augs
-            ),
-            label_encoded,
-            chr_name,
-            start,
-            end,
-            cell_line,
-            label,
-        )
-
-    def __len__(self):
-        return len(self.df)
-
-
-class MaskedTFIntervalDataset(TFIntervalDataset):
-    def __init__(self, mask_prob=0.15, *args, **kwargs):
-        super(MaskedTFIntervalDataset, self).__init__(*args, **kwargs)
-        self.mask_prob = mask_prob
-
-    def __getitem__(self, index):
-        seq, labels = super(MaskedTFIntervalDataset, self).__getitem__(index)
-
-        # Mask the sequence and get the labels
-        masked_seq, _ = mask_sequence(seq, mask_prob=self.mask_prob)
-
-        return masked_seq, labels
-
-
-if __name__ == "__main__":
-    data_dir = "./"
-    # torch.manual_seed(42)
-
-    dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "combined.bed"),
-        fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
-        return_augs=False,
-        rc_aug=False,
-        shift_augs=(-3, 3),
-        context_length=16_384,
-    )
-
-    random_index = torch.randint(0, len(dataset), (1,)).item()
-    extended_data = dataset[random_index]
-
-    print("Extended Data:")
-    print(extended_data)
-
-    # Assuming extended_data[0] is your tensor
-    fifth_column = extended_data[0][:, 4]
-
-    # Finding the maximum value in the 5th column
-    max_value = torch.max(fifth_column)
-
-    print(max_value)
