@@ -23,7 +23,7 @@ TARGET_LENGTH = 896
 # solution came from @johahi
 
 DIR = Path(os.environ.get("SM_CHANNEL_TRAINING", Path(__file__).parents[0]))
-# TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
+TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
 
 # helpers
 
@@ -150,7 +150,11 @@ def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
-        get_positional_features_gamma,
+        (
+            get_positional_features_gamma
+            if not use_tf_gamma
+            else always(TF_GAMMAS.to(device))
+        ),
     ]
 
     num_components = len(feature_functions) * 2
@@ -557,8 +561,6 @@ class DeepSeq(PreTrainedModel):
         #     return out, x
 
         out = self.out(x)
-
-        out = F.softmax(out, dim=-1)
 
         return out
 

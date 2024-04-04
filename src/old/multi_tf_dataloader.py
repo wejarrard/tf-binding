@@ -1,3 +1,4 @@
+import ast
 import os
 import time
 from pathlib import Path
@@ -10,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 # helper functions
 
@@ -270,7 +271,7 @@ class GenomicInterval:
         return extended_data, rand_shift_tensor, rand_aug_bool_tensor
 
 
-class GenomeIntervalDataset(Dataset):
+class TFIntervalDataset(Dataset):
     def __init__(
         self,
         bed_file,
@@ -278,6 +279,8 @@ class GenomeIntervalDataset(Dataset):
         cell_lines_dir,
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
+        mode="train",
+        num_tfs=2,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -290,9 +293,10 @@ class GenomeIntervalDataset(Dataset):
         bed_path = Path(bed_file)
         assert bed_path.exists(), "path to .bed file must exist"
 
-        df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
+        df = pl.read_csv(str(bed_path), separator="\t")
         df = filter_df_fn(df)
         self.df = df
+        self.num_tfs = num_tfs
 
         self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
         self.return_augs = return_augs
@@ -305,160 +309,106 @@ class GenomeIntervalDataset(Dataset):
             shift_augs=shift_augs,
             rc_aug=rc_aug,
         )
-
-    def one_hot_encode_(self, label: str) -> torch.Tensor:
-        """
-        returns 1 or 0 for value, with an extra dimension using einops
-        """
-        return (
-            torch.tensor([1], dtype=torch.float32)
-            if label == "Positive"
-            else torch.tensor([0], dtype=torch.float32)
+        self.label_folders = sorted(
+            [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
+            key=lambda x: x,
         )
+        self.mode = mode
+
+    def process_tfs(self, score, label):  # -> tuple[torch.Tensor, torch.Tensor]:
+        label = ast.literal_eval(label)
+        score = ast.literal_eval(score)
+        tf_list = []
+        labels_tensor = torch.zeros(self.num_tfs)
+        for i, (key, value) in enumerate(label.items()):
+            tf_list.append(key)
+            if value == None:
+                labels_tensor[i] = -1
+            elif value == True:
+                labels_tensor[i] = 1
+            else:
+                labels_tensor[i] = 0
+
+        score_tensor = torch.zeros(self.num_tfs)
+        for i, value in enumerate(score.values()):
+            score_tensor[i] = value
+
+        return score_tensor, labels_tensor, tf_list
+
+        # get
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label = (
+        chr_name, start, end, cell_line, score, label = (
             interval[0],
             interval[1],
             interval[2],
             interval[3],
             interval[4],
+            interval[5],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        label_encoded = self.one_hot_encode_(label)
+        score, label_encoded, tf_list = self.process_tfs(score, label)
 
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
-
-        return (
-            self.processor(
-                chr_name, start, end, pileup_dir, return_augs=self.return_augs
-            ),
-            label_encoded,
-            ind,
-        )
+        if self.mode == "train":
+            return (
+                self.processor(
+                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
+                ),
+                label_encoded,
+                score,
+                tf_list,
+            )
+        elif self.mode == "inference":
+            return (
+                self.processor(
+                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
+                ),
+                label_encoded,
+                score,
+                chr_name,
+                start,
+                end,
+                cell_line,
+                tf_list,
+            )
+        else:
+            return (
+                self.processor(
+                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
+                ),
+                label_encoded,
+                tf_list,
+            )
 
     def __len__(self):
         return len(self.df)
-
-
-class ValidationGenomeIntervalDataset(Dataset):
-    def __init__(
-        self,
-        bed_file,
-        fasta_file,
-        cell_lines_dir,
-        filter_df_fn=identity,
-        chr_bed_to_fasta_map=dict(),
-        context_length=None,
-        return_seq_indices=False,
-        shift_augs=None,
-        rc_aug=False,
-        return_augs=False,
-    ):
-        super().__init__()
-
-        # Initialization for GenomeIntervalDataset
-        bed_path = Path(bed_file)
-        assert bed_path.exists(), "path to .bed file must exist"
-
-        df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
-        df = filter_df_fn(df)
-        self.df = df
-
-        self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
-        self.return_augs = return_augs
-        self.cell_lines_dir = Path(cell_lines_dir)
-
-        self.processor = GenomicInterval(
-            fasta_file=fasta_file,
-            context_length=context_length,
-            return_seq_indices=return_seq_indices,
-            shift_augs=shift_augs,
-            rc_aug=rc_aug,
-        )
-
-    def one_hot_encode_(self, label: str) -> torch.Tensor:
-        """
-        returns 1 or 0 for value, with an extra dimension using einops
-        """
-        return (
-            torch.tensor([1], dtype=torch.float32)
-            if label == "Positive"
-            else torch.tensor([0], dtype=torch.float32)
-        )
-
-    def __getitem__(self, ind):
-        interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label = (
-            interval[0],
-            interval[1],
-            interval[2],
-            interval[3],
-            interval[4],
-        )
-        chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
-
-        label_encoded = self.one_hot_encode_(label)
-
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
-
-        return (
-            self.processor(
-                chr_name, start, end, pileup_dir, return_augs=self.return_augs
-            ),
-            label_encoded,
-            chr_name,
-            start,
-            end,
-            cell_line,
-            label,
-        )
-
-    def __len__(self):
-        return len(self.df)
-
-
-class MaskedGenomeIntervalDataset(GenomeIntervalDataset):
-    def __init__(self, mask_prob=0.15, *args, **kwargs):
-        super(MaskedGenomeIntervalDataset, self).__init__(*args, **kwargs)
-        self.mask_prob = mask_prob
-
-    def __getitem__(self, index):
-        seq, labels = super(MaskedGenomeIntervalDataset, self).__getitem__(index)
-
-        # Mask the sequence and get the labels
-        masked_seq, _ = mask_sequence(seq, mask_prob=self.mask_prob)
-
-        return masked_seq, labels
 
 
 if __name__ == "__main__":
-    data_dir = "data/"
-    torch.manual_seed(42)
-
-    dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_ATAC_broadPeak"),
+    data_dir = "./data"
+    train_dataset = TFIntervalDataset(
+        bed_file=os.path.join(data_dir, "tf.tsv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
         context_length=16_384,
+        mode="train",
     )
 
-    total_size = len(dataset)
-    valid_size = 20_000
-    train_size = total_size - valid_size
-
-    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
-
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=4,
-        shuffle=False,
-        num_workers=0,
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=2,
+        shuffle=True,
+        num_workers=4,
         pin_memory=True,
         drop_last=True,
     )
+
+    for i, data in enumerate(train_loader):
+        inputs, targets, weights = data[0], data[1], data[2]
+        print(inputs.shape, targets.shape, weights.shape)

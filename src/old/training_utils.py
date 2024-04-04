@@ -3,15 +3,14 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from enformer_pytorch import Enformer
-from torch.cuda.amp.grad_scaler import GradScaler
 from torch.cuda.amp.autocast_mode import autocast
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
-import torch.nn.functional as F
-
 
 
 def count_directories(path: str) -> int:
@@ -86,7 +85,11 @@ def train_one_epoch(
     for batch_idx, batch in enumerate(train_loader):
         inputs, targets, weights = batch[0], batch[1], batch[2]
 
-        inputs, targets, weights = inputs.to(device), targets.to(device), weights.to(device)
+        inputs, targets, weights = (
+            inputs.to(device),
+            targets.to(device),
+            weights.to(device),
+        )
 
         optimizer.zero_grad()
 
@@ -94,7 +97,9 @@ def train_one_epoch(
         if scaler and is_distributed:
             with autocast():
                 outputs = model(inputs)
-                loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
+                loss = F.binary_cross_entropy_with_logits(
+                    outputs, targets, weight=weights
+                )
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             clip_grad_norm_(model.parameters(), max_norm=0.2)
@@ -146,7 +151,8 @@ def validate_one_epoch(
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,
-) -> Tuple[float, float]:  # Returns both average loss and accuracy
+    n_classes=1,
+):  # Returns both average loss and accuracy
     model.eval()
     total_loss = 0.0
     correct_predictions = 0
@@ -155,11 +161,18 @@ def validate_one_epoch(
     # Check if distributed training is initialized
     is_distributed = torch.distributed.is_initialized()
 
+    correct_predictions = torch.zeros(n_classes, device=device)
+    total_predictions = torch.zeros(n_classes, device=device)
+
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
             inputs, targets, weights = batch[0], batch[1], batch[2]
 
-            inputs, targets, weights = inputs.to(device), targets.to(device), weights.to(device)
+            inputs, targets, weights = (
+                inputs.to(device),
+                targets.to(device),
+                weights.to(device),
+            )
 
             outputs = model(inputs)
             loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
@@ -175,9 +188,17 @@ def validate_one_epoch(
             total_loss += loss_val
 
             # Calculate accuracy
-            predicted = (outputs.data > 0.5).float()
-            correct_predictions += (predicted == targets).sum().item()
-            total_predictions += targets.numel()
+            predicted = (torch.sigmoid(outputs) > 0.5).float()
+            correct = (predicted == targets).float()
+            for i in range(n_classes):
+                valid_targets = targets[:, i] != -1
+                if valid_targets.any():
+                    correct_predictions[i] += (
+                        ((predicted[:, i] == targets[:, i]) & valid_targets)
+                        .float()
+                        .sum()
+                    )
+                    total_predictions[i] += valid_targets.sum()
 
     average_loss = total_loss / len(val_loader)
     accuracy = correct_predictions / total_predictions * 100

@@ -1,20 +1,16 @@
 import math
-from pathlib import Path
 import os
+from pathlib import Path
 
 import torch
-from torch import nn, einsum
-import torch.nn.functional as F
 import torch.distributed as dist
-from torch.utils.checkpoint import checkpoint_sequential
-
+import torch.nn.functional as F
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
-
-from enformer_pytorch.data import str_to_one_hot, seq_indices_to_one_hot
-
 from enformer_pytorch.config_enformer import EnformerConfig
-
+from enformer_pytorch.data import seq_indices_to_one_hot, str_to_one_hot
+from torch import einsum, nn
+from torch.utils.checkpoint import checkpoint_sequential
 from transformers import PreTrainedModel
 
 # constants
@@ -27,7 +23,7 @@ TARGET_LENGTH = 896
 # solution came from @johahi
 
 DIR = Path(os.environ.get("SM_CHANNEL_TRAINING", Path(__file__).parents[0]))
-TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
+# TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
 
 # helpers
 
@@ -154,9 +150,7 @@ def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
-        get_positional_features_gamma
-        if not use_tf_gamma
-        else always(TF_GAMMAS.to(device)),
+        get_positional_features_gamma,
     ]
 
     num_components = len(feature_functions) * 2
@@ -563,6 +557,8 @@ class DeepSeq(PreTrainedModel):
         #     return out, x
 
         out = self.out(x)
+
+        out = F.softmax(out, dim=-1)
 
         return out
 

@@ -83,7 +83,7 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
-    num_tfs = 2
+    num_tfs = 1
 
     ############ DEVICE ############
 
@@ -123,11 +123,10 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     model.load_state_dict(modified_state_dict)
 
     model.out = nn.Sequential(
-        # PrintShape(name="Head In"),
         nn.Linear(model.dim * 2, num_tfs),
-        # PrintShape(name="Linear"),
-        Rearrange("... () -> ..."),
+        Rearrange("... c o -> ... o c"),
         nn.Linear(512, 1),
+        nn.Flatten(),
     )
 
     for param in model.parameters():
@@ -158,7 +157,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "FOXA1_AR_train"),
+        bed_file=os.path.join(data_dir, "AR_22rv1_drop_train"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -179,7 +178,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "FOXA1_AR_val"),
+        bed_file=os.path.join(data_dir, "AR_22rv1_drop_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -261,10 +260,11 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
             val_loader=valid_loader,
             criterion=criterion,
             device=device,
+            n_classes=num_tfs,
         )
         if rank == 0:
             print(
-                f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss:.4f} | Val acc: {val_acc:.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
+                f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss} | Val acc: {val_acc} | LR: {scheduler.get_last_lr()[0]:.4f}"
             )
             if early_stopping(val_loss, model):
                 if DISTRIBUTED:
