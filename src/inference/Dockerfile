@@ -1,22 +1,28 @@
-# Use the slim version of Python 3.10 as the base image
-FROM python:3.10-slim
-# FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-devel
+# Use ubuntu 22.04 as the base image
+# FROM ubuntu:22.04
+FROM --platform=linux/amd64 nvidia/cuda:12.3.2-base-ubuntu22.04
 # Install gcc to compile any extensions
-RUN apt-get update && apt-get install -y gcc
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3.10 \
+    python3-pip
+
 
 # Copy the necessary files into the container at /app
-COPY dataloader.py /app/dataloader.py
-COPY deepseq.py /app/deepseq.py
-COPY inference.py /app/inference.py
-COPY main.py /app/main.py
-COPY requirements.txt /app/requirements.txt
-COPY entrypoint.sh /app/entrypoint.sh
+COPY dataloader.py /opt/program/dataloader.py
+COPY deepseq.py /opt/program/deepseq.py
+COPY inference.py /opt/program/inference.py
+COPY main.py /opt/program/main.py
+COPY requirements.txt /opt/program/requirements.txt
+COPY entrypoint.sh /opt/program/entrypoint.sh
+# COPY serve /opt/program/serve
+
 
 # Set the working directory to /app
-WORKDIR /app
+WORKDIR /opt/program
 
 # ONLY FOR TESTING: Copy pretrained model
-COPY data/pretrained_weight.pth /opt/ml/model/pretrained_weight.pth
+# COPY data/pretrained_weight.pth /opt/ml/model/pretrained_weight.pth
 
 
 # Make entrypoint.sh executable
@@ -35,3 +41,8 @@ EXPOSE 8080
 
 # Set the entry point to use the entry script
 ENTRYPOINT ["./entrypoint.sh"]
+
+# Local testings
+# docker build -t tf-binding-inference .
+# docker run -p 8080:8080 tf-binding-inference serve
+# curl -X POST -F "file=@data/dataset.tfrecord" http://localhost:8080/invocations --output downloaded_file.tsv

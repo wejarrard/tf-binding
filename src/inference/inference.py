@@ -7,7 +7,6 @@ import os
 
 import pandas as pd
 import torch
-import torch.nn.functional as F
 from captum.attr import DeepLift
 from dataloader import EnhancedTFRecordDataset
 from deepseq import DeepSeq
@@ -23,7 +22,7 @@ def get_predictions(model, device: torch.device, val_loader):
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line = (
+            inputs, targets, weights, chr_name, start, end, cell_line, tf_list = (
                 batch["input"],
                 batch["target"],
                 batch["weight"],
@@ -66,6 +65,7 @@ def get_predictions(model, device: torch.device, val_loader):
                         start[i].item(),
                         end[i].item(),
                         cell_line[i],
+                        tf_list,
                         targets[i].cpu(),
                         predicted[i].cpu(),
                         weights[i].cpu(),
@@ -74,8 +74,8 @@ def get_predictions(model, device: torch.device, val_loader):
                         attributions,
                     ]
                 )
-            if batch_idx == 20:
-                break
+            if (batch_idx + 1) % 50 == 0:
+                print(f"Processed {batch_idx + 1} batches.")
 
     result_df = pd.DataFrame(
         result,
@@ -84,6 +84,7 @@ def get_predictions(model, device: torch.device, val_loader):
             "start",
             "end",
             "cell_line",
+            "tf_list",
             "targets",
             "predicted",
             "weights",
@@ -96,13 +97,13 @@ def get_predictions(model, device: torch.device, val_loader):
     return result_df
 
 
-def load_model(model_dir):
+def load_model(model_dir, num_tfs=1):
     model = DeepSeq.from_hparams(
         dim=1536,
         depth=11,
         heads=8,
         target_length=-1,
-        num_cell_lines=1,
+        num_cell_lines=num_tfs,
         return_augs=True,
         num_downsamples=5,
     ).to(device)

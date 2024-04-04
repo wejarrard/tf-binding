@@ -36,6 +36,10 @@ class EnhancedTFRecordDataset(TFRecordDataset):
         item["target"] = self.recreate_tensor(item["target"], [self.num_tfs])
         item["weight"] = self.recreate_tensor(item["weight"], [self.num_tfs])
 
+        try:
+            item["tf_list"] = item["tf_list"].decode()
+        except:
+            print(item["tf_list"])
         item["chr_name"] = item["chr_name"].decode()
         item["cell_line"] = item["cell_line"].decode()
 
@@ -56,9 +60,14 @@ if __name__ == "__main__":
         "start": "int",
         "end": "int",
         "cell_line": "byte",
+        "tf_list": "byte",
     }
     dataset = EnhancedTFRecordDataset(
-        tfrecord_path, index_path, description, compression_type="gzip"
+        data_path=tfrecord_path,
+        index_path=index_path,
+        description=description,
+        compression_type="gzip",
+        num_tfs=1,
     )
 
     dataloader = DataLoader(
@@ -73,4 +82,4 @@ if __name__ == "__main__":
     data = next(iter(dataloader))
 
     for key, value in data.items():
-        print(type(value))
+        print(value)

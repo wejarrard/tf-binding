@@ -1,3 +1,9 @@
+# local testings
+# uvicorn main:app --reload
+# curl -X 'POST' \
+#   'http://127.0.0.1:8000/invocations' \
+#   -F 'file=@data/dataset.tfrecord;type=application/octet-stream' \
+#   --output downloaded_file.tsv
 import io
 import os
 import shutil
@@ -7,7 +13,7 @@ from tempfile import NamedTemporaryFile
 import uvicorn
 from dataloader import EnhancedTFRecordDataset
 from fastapi import FastAPI, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from inference import load_model, predict
 
@@ -25,6 +31,18 @@ def save_upload_file_tmp(upload_file: UploadFile) -> Path:
     return tmp_path
 
 
+@app.get("/ping")
+def ping():
+    """Determine if the container is working and healthy. In this sample container, we declare
+    it healthy if we can load the model successfully."""
+    model_path = os.getenv("MODEL_PATH")
+    model = load_model(model_path, num_tfs=1)
+    health = model is not None  # You can insert a health check here
+
+    status = 200 if health else 404
+    return Response(content="\n", status_code=status, media_type="application/json")
+
+
 @app.post("/invocations")
 async def get_inference(file: UploadFile):
     # Load your model (consider loading it outside of request handling if it's heavy)
@@ -33,7 +51,7 @@ async def get_inference(file: UploadFile):
         model_path = os.getenv("MODEL_PATH")
     else:
         model_path = "data/"
-    model = load_model(model_path)
+    model = load_model(model_path, num_tfs=1)
 
     data_path = save_upload_file_tmp(file)
 
@@ -46,6 +64,7 @@ async def get_inference(file: UploadFile):
         "start": "int",
         "end": "int",
         "cell_line": "byte",
+        "tf_list": "byte",
     }
     dataset = EnhancedTFRecordDataset(
         data_path=data_path,
