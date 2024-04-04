@@ -10,13 +10,13 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from multi_tf_dataloader import TFIntervalDataset
 from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
 from enformer_pytorch import Enformer
 from finetune import HeadAdapterWrapper
 from loss import FocalLoss
+from multi_tf_dataloader import TFIntervalDataset
 from torch.cpu import is_available
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -83,9 +83,8 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
-
     num_tfs = 2
-    
+
     ############ DEVICE ############
 
     # Check for CUDA availability
@@ -125,10 +124,10 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     model.out = nn.Sequential(
         # PrintShape(name="Head In"),
-        nn.Linear(model.dim * 2, 1),
+        nn.Linear(model.dim * 2, num_tfs),
         # PrintShape(name="Linear"),
         Rearrange("... () -> ..."),
-        nn.Linear(512, num_tfs),
+        nn.Linear(512, 1),
     )
 
     for param in model.parameters():
