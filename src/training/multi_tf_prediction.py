@@ -17,7 +17,6 @@ from enformer_pytorch import Enformer
 from finetune import HeadAdapterWrapper
 from loss import FocalLoss
 from multi_tf_dataloader import TFIntervalDataset
-from torch.cpu import is_available
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
@@ -101,9 +100,11 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ MODEL ############
 
+    print("Loading pretrained model")
+
     num_cell_lines = 33
 
-    model = DeepSeq.from_hparams(
+    pretrained_model = DeepSeq.from_hparams(
         dim=1536,
         depth=11,
         heads=8,
@@ -120,7 +121,33 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     modified_state_dict = {
         key.replace("_orig_mod.module.", ""): value for key, value in state_dict.items()
     }
-    model.load_state_dict(modified_state_dict)
+    pretrained_model.load_state_dict(modified_state_dict)
+
+    print("pretrained model loaded")
+
+    updated_config = pretrained_model.config
+    updated_config.num_downsamples = 3
+    # updated_config.dim = 1024
+
+    model = DeepSeq(updated_config)
+
+    print("loading smaller dim model")
+
+    # Copy weights for layers outside of conv_tower
+    model.stem.load_state_dict(pretrained_model.stem.state_dict())
+    model.transformer.load_state_dict(pretrained_model.transformer.state_dict())
+    model.final_pointwise.load_state_dict(pretrained_model.final_pointwise.state_dict())
+    model.out.load_state_dict(pretrained_model.out.state_dict())
+
+
+    print("smaller dim model loaded")
+
+
+    # For conv_tower, we need to handle it separately
+    # Assuming the structure of conv_tower is a sequential model of blocks
+    # for i in range(min(len(pretrained_model.conv_tower), len(model.conv_tower))):
+    #     model.conv_tower[i].load_state_dict(pretrained_model.conv_tower[i].state_dict())
+
 
     model.out = nn.Sequential(
         nn.Linear(model.dim * 2, num_tfs),
@@ -128,14 +155,10 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         nn.Linear(512, 1),
         nn.Flatten(),
     )
-
     for param in model.parameters():
         param.requires_grad = True
 
-    # for name, param in model.named_parameters():
-    #     if "transformer" in name:
-    #         param.requires_grad = False
-    # print("Transformer weights frozen")
+    del pretrained_model, modified_state_dict, state_dict
 
     if DISTRIBUTED:
         # https://github.com/dougsouza/pytorch-sync-batchnorm-example
@@ -157,14 +180,14 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_22rv1_drop_train"),
+        bed_file=os.path.join(data_dir, "test"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
-        context_length=16_384,
+        context_length=4_096,
         mode="train",
     )
 
@@ -178,13 +201,13 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_22rv1_drop_val"),
+        bed_file=os.path.join(data_dir, "test"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
         return_augs=False,
         rc_aug=False,
-        context_length=16_384,
+        context_length=4_096,
         mode="train",
     )
 
@@ -223,7 +246,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     early_stopping = EarlyStopping(
         patience=args.early_stopping_patience,
         verbose=True,
-        save_path=f"/opt/ml/model/pretrained_weight.pth",
+        save_path=f"./pretrained_weight.pth",
     )
 
     ############ TENSORBOARD ############

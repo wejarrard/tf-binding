@@ -357,7 +357,7 @@ class TFIntervalDataset(Dataset):
         score, label_encoded = self.process_tfs(score, label)
 
 
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+        pileup_dir = self.cell_lines_dir / Path(cell_line)
         if self.mode == "train":
             return (
                 self.processor(
