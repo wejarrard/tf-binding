@@ -16,3 +16,10 @@ for cell_line in */; do
     fi
 done
 wait
+
+
+# tar cf - cell_lines | pigz > cell_lines.tar.gz
+# pigz -dc archive.tar.gz | tar xf -
+
+
+# find cell_lines -type f -name '*.pileup' -delete
