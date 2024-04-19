@@ -247,6 +247,8 @@ class GenomicInterval:
 
         df = process_pileups(pileup_dir, chr_name, start, end)
 
+        max_count = df['count'].max() if df.height > 0 else 1
+
         # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
         for row in df.iter_rows(named=True):
             position = row["position"]
@@ -255,8 +257,10 @@ class GenomicInterval:
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
 
+            standardized_count = count / max_count if max_count else 0 
+
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = count
+            extended_data[relative_position, 4] = standardized_count
 
         if should_rc_aug:
             extended_data = one_hot_reverse_complement(extended_data)
@@ -393,7 +397,7 @@ class TFIntervalDataset(Dataset):
 if __name__ == "__main__":
     data_dir = "./data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "tf.tsv"),
+        bed_file=os.path.join(data_dir, "test"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -414,4 +418,4 @@ if __name__ == "__main__":
 
     for i, data in enumerate(train_loader):
         inputs, targets, weights = data[0], data[1], data[2]
-        print(inputs.shape, targets.shape, weights.shape)
+        print(inputs)
