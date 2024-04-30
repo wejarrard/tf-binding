@@ -32,14 +32,14 @@ class EnhancedTFRecordDataset(TFRecordDataset):
 
     def process(self, item):
         """Convert 'input', 'target', and 'weight' binary data in a dictionary to PyTorch tensors."""
-        item["input"] = self.recreate_tensor(item["input"], [16384, 5])
+        item["input"] = self.recreate_tensor(item["input"], [4_096, 5])
         item["target"] = self.recreate_tensor(item["target"], [self.num_tfs])
         item["weight"] = self.recreate_tensor(item["weight"], [self.num_tfs])
 
-        try:
-            item["tf_list"] = item["tf_list"].decode()
-        except:
-            print(item["tf_list"])
+        # try:
+        #     item["tf_list"] = item["tf_list"].decode()
+        # except:
+        #     print(item["tf_list"])
         item["chr_name"] = item["chr_name"].decode()
         item["cell_line"] = item["cell_line"].decode()
 
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         "start": "int",
         "end": "int",
         "cell_line": "byte",
-        "tf_list": "byte",
+        # "tf_list": "byte",
     }
     dataset = EnhancedTFRecordDataset(
         data_path=tfrecord_path,

@@ -64,7 +64,7 @@ async def get_inference(file: UploadFile):
         "start": "int",
         "end": "int",
         "cell_line": "byte",
-        "tf_list": "byte",
+        # "tf_list": "byte",
     }
     dataset = EnhancedTFRecordDataset(
         data_path=data_path,

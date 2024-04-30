@@ -10,6 +10,8 @@ import torch
 from captum.attr import DeepLift
 from dataloader import EnhancedTFRecordDataset
 from deepseq import DeepSeq
+from einops.layers.torch import Rearrange
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,7 +24,7 @@ def get_predictions(model, device: torch.device, val_loader):
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line, tf_list = (
+            inputs, targets, weights, chr_name, start, end, cell_line = (
                 batch["input"],
                 batch["target"],
                 batch["weight"],
@@ -30,7 +32,6 @@ def get_predictions(model, device: torch.device, val_loader):
                 batch["start"],
                 batch["end"],
                 batch["cell_line"],
-                batch["tf_list"],
             )
 
             inputs, targets, weights = (
@@ -65,7 +66,6 @@ def get_predictions(model, device: torch.device, val_loader):
                         start[i].item(),
                         end[i].item(),
                         cell_line[i],
-                        tf_list,
                         targets[i].cpu(),
                         predicted[i].cpu(),
                         weights[i].cpu(),
@@ -76,6 +76,7 @@ def get_predictions(model, device: torch.device, val_loader):
                 )
             if (batch_idx + 1) % 50 == 0:
                 print(f"Processed {batch_idx + 1} batches.")
+                break
 
     result_df = pd.DataFrame(
         result,
@@ -84,7 +85,6 @@ def get_predictions(model, device: torch.device, val_loader):
             "start",
             "end",
             "cell_line",
-            "tf_list",
             "targets",
             "predicted",
             "weights",
@@ -105,8 +105,15 @@ def load_model(model_dir, num_tfs=1):
         target_length=-1,
         num_cell_lines=num_tfs,
         return_augs=True,
-        num_downsamples=5,
+        num_downsamples=3,
     ).to(device)
+
+    model.out = nn.Sequential(
+        nn.Linear(model.dim * 2, num_tfs),
+        Rearrange("... c o -> ... o c"),
+        nn.Linear(512, 1),
+        nn.Flatten(),
+    )
 
     # model = transfer_enformer_weights_to_(model, transformer_only=True)
     state_dict = torch.load(
@@ -156,7 +163,7 @@ if __name__ == "__main__":
     }
     dataset = EnhancedTFRecordDataset(tfrecord_path, index_path, description)
 
-    model_dir = "model"
+    model_dir = "data"
     model = load_model(model_dir)
 
     result_df = predict(dataset, model)

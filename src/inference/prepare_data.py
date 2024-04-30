@@ -8,7 +8,7 @@ import torch.multiprocessing
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from training.multi_tf_dataloader import TFIntervalDataset
+from training.tf_dataloader import TFIntervalDataset
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 
@@ -41,52 +41,60 @@ def _int64_feature(value):
 def main() -> None:
     data_dir = "training/data"
     output_dir = "inference/data"
-    tfrecords_filename = os.path.join(output_dir, "dataset.tfrecord")
+    base_tfrecords_filename = os.path.join(output_dir, "dataset")
+    file_index = 1
+    tfrecords_filename = f"{base_tfrecords_filename}_{file_index}.tfrecord"
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "modified_AR_ATAC_broadPeak_val"),
+        bed_file=os.path.join(data_dir, "AR_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=False,
         shift_augs=(0, 0),
-        context_length=16_384,
+        context_length=4_096,
         mode="inference",
+        num_tfs=1,
     )
 
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=8)
 
-    options = tf.io.TFRecordOptions(
-        compression_type="GZIP",
-        flush_mode=None,
-        input_buffer_size=None,
-        output_buffer_size=None,
-        window_bits=None,
-        compression_level=None,
-        compression_method=None,
-        mem_level=None,
-        compression_strategy=None,
-    )
+    options = tf.io.TFRecordOptions(compression_type="GZIP")
 
-    with tf.io.TFRecordWriter(tfrecords_filename, options) as writer:
-        for item in tqdm(dataloader, desc="Preparing Data"):
-            # Create a feature
-            feature = {
-                "input": _torch_tensor_feature(item[0]),
-                "target": _torch_tensor_feature(item[1]),
-                "weight": _torch_tensor_feature(item[2]),
-                "chr_name": _string_feature(item[3][0]),
-                "start": _int64_feature(item[4]),
-                "end": _int64_feature(item[5]),
-                "cell_line": _string_feature(item[6][0]),
-                "tf_list": _string_feature_list(item[7]),
-            }
+    writer = tf.io.TFRecordWriter(tfrecords_filename, options)
+    max_file_size = 99 * 1024 * 1024  # 99 MB in bytes
 
-            # Create an example protocol buffer
-            example = tf.train.Example(features=tf.train.Features(feature=feature))
+    for item in tqdm(dataloader, desc="Preparing Data"):
+        # Create a feature
+        feature = {
+            "input": _torch_tensor_feature(item[0]),
+            "target": _torch_tensor_feature(item[1]),
+            "weight": _torch_tensor_feature(item[2]),
+            "chr_name": _string_feature(item[3][0]),
+            "start": _int64_feature(item[4]),
+            "end": _int64_feature(item[5]),
+            "cell_line": _string_feature(item[6][0]),
+            # "tf_list": _string_feature_list(item[7]),
+        }
 
-            # Serialize to string and write on the file
-            writer.write(example.SerializeToString())
+        # Create an example protocol buffer
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+
+        # Serialize to string and write on the file
+        writer.write(example.SerializeToString())
+
+        # Check if the current file size exceeds the limit
+        if os.path.getsize(tfrecords_filename) > max_file_size:
+            writer.close()  # Close the current file
+            file_index += 1  # Increment the file index
+            tfrecords_filename = (
+                f"{base_tfrecords_filename}_{file_index}.tfrecord"  # New file name
+            )
+            writer = tf.io.TFRecordWriter(
+                tfrecords_filename, options
+            )  # Create a new writer
+
+    writer.close()  # Ensure the last file is closed properly
 
 
 if __name__ == "__main__":
