@@ -33,16 +33,16 @@ response = client.create_transform_job(
     ModelName="ar-inference",
     MaxConcurrentTransforms=1,
     MaxPayloadInMB=100,
-    BatchStrategy="SingleRecord",  #
+    BatchStrategy="MultiRecord",  #
     TransformInput={
         "DataSource": {
             "S3DataSource": {
                 "S3DataType": "S3Prefix",
-                "S3Uri": "s3://tf-binding-sites/inference/input/dataset_2.tfrecord",
+                "S3Uri": "s3://tf-binding-sites/inference/input/",
             }
         },
         "ContentType": "string",
-        "CompressionType": "None",
+        # "CompressionType": "Gzip",
         "SplitType": "TFRecord",
     },
     TransformOutput={

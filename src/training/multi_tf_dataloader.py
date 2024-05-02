@@ -1,3 +1,4 @@
+import ast
 import os
 import time
 from pathlib import Path
@@ -11,7 +12,6 @@ import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
 from torch.utils.data import DataLoader, Dataset
-import ast
 
 # helper functions
 
@@ -247,7 +247,7 @@ class GenomicInterval:
 
         df = process_pileups(pileup_dir, chr_name, start, end)
 
-        max_count = df['count'].max() if df.height > 0 else 1
+        max_count = df["count"].max() if df.height > 0 else 1
 
         # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
         for row in df.iter_rows(named=True):
@@ -257,10 +257,11 @@ class GenomicInterval:
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
 
-            standardized_count = count / max_count if max_count else 0 
+            # ADD IN IF YOU WANT TO STANDARDIZE, MUST ALSO CHANGE EXTENDED DATA DIRECTLY BELOW THIS
+            # standardized_count = count / max_count if max_count else 0
 
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = standardized_count
+            extended_data[relative_position, 4] = count
 
         if should_rc_aug:
             extended_data = one_hot_reverse_complement(extended_data)
@@ -300,7 +301,7 @@ class TFIntervalDataset(Dataset):
         df = pl.read_csv(str(bed_path), separator="\t")
         df = filter_df_fn(df)
         self.df = df
-        self.num_tfs= num_tfs
+        self.num_tfs = num_tfs
 
         self.chr_bed_to_fasta_map = chr_bed_to_fasta_map
         self.return_augs = return_augs
@@ -319,7 +320,7 @@ class TFIntervalDataset(Dataset):
         )
         self.mode = mode
 
-    def process_tfs(self, score, label):# -> tuple[torch.Tensor, torch.Tensor]:
+    def process_tfs(self, score, label):  # -> tuple[torch.Tensor, torch.Tensor]:
         label = ast.literal_eval(label)
         score = ast.literal_eval(score)
 
@@ -332,19 +333,13 @@ class TFIntervalDataset(Dataset):
             else:
                 labels_tensor[i] = 0
 
-
         score_tensor = torch.zeros(self.num_tfs)
         for i, item in enumerate(score.items()):
             score_tensor[i] = item[1]
-        
 
         return score_tensor, labels_tensor
-        
-            
 
         # get
-        
-        
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
@@ -359,7 +354,6 @@ class TFIntervalDataset(Dataset):
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
         score, label_encoded = self.process_tfs(score, label)
-
 
         pileup_dir = self.cell_lines_dir / Path(cell_line)
         if self.mode == "train":

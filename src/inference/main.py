@@ -2,7 +2,7 @@
 # uvicorn main:app --reload
 # curl -X 'POST' \
 #   'http://127.0.0.1:8000/invocations' \
-#   -F 'file=@data/dataset.tfrecord;type=application/octet-stream' \
+#   -F 'file=@data/dataset_2.tfrecord;type=application/octet-stream' \
 #   --output downloaded_file.tsv
 import io
 import os
@@ -14,8 +14,16 @@ import uvicorn
 from dataloader import EnhancedTFRecordDataset
 from fastapi import FastAPI, UploadFile
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 
 from inference import load_model, predict
+
+
+class ExecutionParameters(BaseModel):
+    MaxConcurrentTransforms: int = 1
+    BatchStrategy: str = "MULTI_RECORD"
+    MaxPayloadInMB: int = 100
+
 
 app = FastAPI()
 
@@ -43,8 +51,17 @@ def ping():
     return Response(content="\n", status_code=status, media_type="application/json")
 
 
+# Execution-parameters endpoint
+@app.get("/execution-parameters", response_model=ExecutionParameters)
+async def execution_parameters():
+    # You can dynamically adjust these values based on the environment or other logic
+    params = ExecutionParameters()
+    return params
+
+
 @app.post("/invocations")
 async def get_inference(file: UploadFile):
+    print("Received file")
     # Load your model (consider loading it outside of request handling if it's heavy)
     # model = load_model("/opt/ml/model")
     if os.getenv("MODEL_PATH"):
@@ -66,6 +83,14 @@ async def get_inference(file: UploadFile):
         "cell_line": "byte",
         # "tf_list": "byte",
     }
+
+    # CHeck if file path exists
+    if not os.path.exists(data_path):
+        print(f"File path {data_path} does not exist.")
+        return
+    else:
+        print(f"File path {data_path} exists.")
+
     dataset = EnhancedTFRecordDataset(
         data_path=data_path,
         index_path=index_path,

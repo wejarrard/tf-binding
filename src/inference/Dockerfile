@@ -25,8 +25,8 @@ WORKDIR /usr/local/bin
 # COPY data/pretrained_weight.pth /opt/ml/model/pretrained_weight.pth
 
 
-# change permissions of the entrypoint script
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# change permissions of all scripts in bin to be executable
+RUN chmod -R +x /usr/local/bin
 
 # Install FastAPI, Uvicorn, and other required packages
 RUN pip install --no-cache-dir -r requirements.txt
