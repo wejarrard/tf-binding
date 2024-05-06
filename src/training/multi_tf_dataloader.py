@@ -252,7 +252,7 @@ class GenomicInterval:
         # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
         for row in df.iter_rows(named=True):
             position = row["position"]
-            count = row["count"]
+            count = 10 ** row["count"]  # Reverse the log base 10 transformation
 
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
@@ -355,7 +355,8 @@ class TFIntervalDataset(Dataset):
 
         score, label_encoded = self.process_tfs(score, label)
 
-        pileup_dir = self.cell_lines_dir / Path(cell_line)
+        # pileup_dir = self.cell_lines_dir / Path(cell_line)
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
         if self.mode == "train":
             return (
                 self.processor(
