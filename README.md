@@ -1,6 +1,6 @@
 # TF Binding Prediction
 
-This project is focused on predicting transcription factor (TF) binding sites using deep learning. It's organized into three main phases: preprocessing, pretraining, and finetuning.
+This project is focused on predicting transcription factor (TF) binding sites using ATAC seq. It's organized into three main phases: preprocessing, pretraining, and finetuning.
 
 
 
