@@ -180,7 +180,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "test"),
+        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,

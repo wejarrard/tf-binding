@@ -12,6 +12,9 @@ import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
 from torch.utils.data import DataLoader, Dataset
+import seaborn as sns
+
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 # helper functions
 
@@ -104,7 +107,7 @@ def seq_indices_reverse_complement(seq_indices):
 
 def one_hot_reverse_complement(one_hot):
     *_, n, d = one_hot.shape
-    assert d == 4, "must be one hot encoding with last dimension equal to 4"
+    assert d == 5, "must be one hot encoding with last dimension equal to 4"
     return torch.flip(one_hot, (-1, -2))
 
 
@@ -238,42 +241,14 @@ class GenomicInterval:
 
         one_hot = str_to_one_hot(seq)
 
-        if should_rc_aug:
-            one_hot = one_hot_reverse_complement(one_hot)
-
         # Initialize a column of zeros for the reads
-        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.long)
+        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.float)
         assert (
             reads_tensor.shape[0] == one_hot.shape[0]
         ), f"reads tensor must be same length as one hot tensor, reads: {reads_tensor.shape[0]} != one hot: {one_hot.shape[0]}"
-        extended_data = torch.cat((one_hot, reads_tensor), dim=-1)
 
         df = process_pileups(pileup_dir, chr_name, start, end)
-
-        # max_count = df["count"].max() if df.height > 0 else 1
-
-        # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
-        for row in df.iter_rows(named=True):
-            position = row["position"]
-            # count = 10 ** row["count"]  # Reverse the log base 10 transformation
-
-            # Calculate the relative position directly without using a separate position_tensor
-            relative_position = position - start - 1
-
-            # ADD IN IF YOU WANT TO STANDARDIZE, MUST ALSO CHANGE EXTENDED DATA DIRECTLY BELOW THIS
-            # standardized_count = count / max_count if max_count else 0
-
-            # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = row["count"]
-
-        if not return_augs:
-            return extended_data
-            # return one_hot
-
-        rand_shift_tensor = torch.tensor([rand_shift])
-        rand_aug_bool_tensor = torch.tensor([should_rc_aug])
-
-        return extended_data, rand_shift_tensor, rand_aug_bool_tensor
+        return df["count"].to_numpy().copy()
 
 
 class TFIntervalDataset(Dataset):
@@ -320,9 +295,26 @@ class TFIntervalDataset(Dataset):
         )
         self.mode = mode
 
-    def process_tfs(self, score: int, label: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return torch.tensor([score]), torch.tensor([label], dtype=torch.float32)
+    def process_tfs(self, score, label):  # -> tuple[torch.Tensor, torch.Tensor]:
+        label = ast.literal_eval(label)
+        score = ast.literal_eval(score)
 
+        labels_tensor = torch.zeros(self.num_tfs)
+        for i, item in enumerate(label.items()):
+            if item[1] == None:
+                labels_tensor[i] = -1
+            elif item[1] == True:
+                labels_tensor[i] = 1
+            else:
+                labels_tensor[i] = 0
+
+        score_tensor = torch.zeros(self.num_tfs)
+        for i, item in enumerate(score.items()):
+            score_tensor[i] = item[1]
+
+        return score_tensor, labels_tensor
+
+        # get
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
@@ -340,60 +332,49 @@ class TFIntervalDataset(Dataset):
 
         # pileup_dir = self.cell_lines_dir / Path(cell_line)
         pileup_dir = self.cell_lines_dir / Path(cell_line)
-        if self.mode == "train":
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-                score,
+        return self.processor(
+                chr_name, start, end, pileup_dir, return_augs=self.return_augs
             )
-        elif self.mode == "inference":
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-                score,
-                chr_name,
-                start,
-                end,
-                cell_line,
-            )
-        else:
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-            )
+
 
     def __len__(self):
         return len(self.df)
 
 
 if __name__ == "__main__":
-    data_dir = "./data"
+    np.set_printoptions(threshold=np.inf)
+    data_dir = "../training/data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
+        bed_file=os.path.join(data_dir, "AR_val"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
-        shift_augs=(-50, 50),
+        shift_augs=(0, 0),
         context_length=4_096,
-        mode="train",
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=2,
+        batch_size=1,
         shuffle=True,
-        num_workers=4,
+        num_workers=32,
         pin_memory=True,
         drop_last=True,
     )
 
+    concatenated_data = []
+
     for i, data in enumerate(train_loader):
-        inputs, targets, weights = data[0], data[1], data[2]
-        print(inputs.shape, targets.shape, weights.shape)
+        pileup_data = data[0]
+        concatenated_data.append(pileup_data)
+        if i == 5:
+            break
+    
+    log_transformed_counts = torch.cat(concatenated_data, dim=0).numpy()
+    print(log_transformed_counts)
+
+    original_counts_rounded = np.round(np.power(10, log_transformed_counts)).astype(int)
+    print(original_counts_rounded)
+
+    sns.barplot(original_counts_rounded)

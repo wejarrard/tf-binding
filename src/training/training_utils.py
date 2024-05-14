@@ -98,7 +98,7 @@ def train_one_epoch(
             with autocast():
                 outputs = model(inputs)
                 loss = F.binary_cross_entropy_with_logits(
-                    outputs, targets, weight=weights
+                    outputs, targets
                 )
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -107,7 +107,7 @@ def train_one_epoch(
             scaler.update()
         else:
             outputs = model(inputs)
-            loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
+            loss = F.binary_cross_entropy_with_logits(outputs, targets)
             loss.backward()
             clip_grad_norm_(model.parameters(), max_norm=0.2)
 
