@@ -142,14 +142,12 @@ def get_positional_features_gamma(
 def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     distances = torch.arange(-seq_len + 1, seq_len, device=device)
 
-    assert (
-        not use_tf_gamma or seq_len == 1536
-    ), "if using tf gamma, only sequence length of 1536 allowed for now"
-
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
-        get_positional_features_gamma,
+        (
+            get_positional_features_gamma
+        ),
     ]
 
     num_components = len(feature_functions) * 2
@@ -192,22 +190,6 @@ class Residual(nn.Module):
 
     def forward(self, x, **kwargs):
         return self.fn(x, **kwargs) + x
-
-
-class ReLU(nn.Module):
-    __constants__ = ["inplace"]
-    inplace: bool
-
-    def __init__(self, inplace: bool = False):
-        super().__init__()
-        self.inplace = inplace
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return F.relu(input, inplace=self.inplace)
-
-    def extra_repr(self) -> str:
-        inplace_str = "inplace=True" if self.inplace else ""
-        return inplace_str
 
 
 class GELU(nn.Module):
@@ -442,7 +424,7 @@ class DeepSeq(PreTrainedModel):
                             nn.LayerNorm(config.dim),
                             nn.Linear(config.dim, config.dim * 2),
                             nn.Dropout(config.dropout_rate),
-                            ReLU(),
+                            nn.ReLU(),
                             nn.Linear(config.dim * 2, config.dim),
                             nn.Dropout(config.dropout_rate),
                         )
@@ -552,22 +534,28 @@ class DeepSeq(PreTrainedModel):
         if return_only_embeddings:
             return x
 
+        # out = map_values(lambda fn: fn(x), self.heads)
+
+        # if exists(head):
+        #     assert head in self._heads, f"head {head} not found"
+        #     out = out[head]
+
+        # if exists(target):
+        #     assert exists(
+        #         head
+        #     ), "head must be passed in if one were to calculate loss directly with targets"
+
+        #     if return_corr_coef:
+        #         return pearson_corr_coef(out, target)
+
+        #     return poisson_loss(out, target)
+
+        # if return_embeddings:
+        #     return out, x
+
         out = self.out(x)
 
         return out
 
 
 # from pretrained function
-
-
-def from_pretrained(name, use_tf_gamma=None, **kwargs):
-    enformer = Enformer.from_pretrained(name, **kwargs)
-
-    if name == "EleutherAI/enformer-official-rough":
-        use_tf_gamma = default(use_tf_gamma, True)
-
-        for module in enformer.modules():
-            if isinstance(module, Attention):
-                module.use_tf_gamma = use_tf_gamma
-
-    return enformer

@@ -1,21 +1,23 @@
-#     --endpoint-name endpoint_name \
-# aws sagemaker-runtime invoke-endpoint \
-#     --body fileb://$file_name \
-#     output_file.txt
-
+import io
+import logging
 import os
+import sys
+# from tempfile import NamedTemporaryFile
 
 import pandas as pd
 import torch
-from captum.attr import DeepLift
-from dataloader import EnhancedTFRecordDataset
+import torch.nn as nn
+import torch.utils.data
+import torch.utils.data.distributed
 from deepseq import DeepSeq
 from einops.layers.torch import Rearrange
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from dataloader import JSONLinesDataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler(sys.stdout))
 
 def get_predictions(model, device: torch.device, val_loader):
     model.eval()
@@ -40,16 +42,6 @@ def get_predictions(model, device: torch.device, val_loader):
                 weights.to(device),
             )
 
-            baselines = torch.zeros_like(inputs)
-
-            dl = DeepLift(model)
-
-            attributions = dl.attribute(
-                inputs=inputs,
-                baselines=baselines,
-                target=0,  # targets.squeeze().type(torch.int64),
-                # return_convergence_delta=True,
-            )
             outputs = model(inputs)
             # Get sigmoid transformed outputs
             outputs = torch.sigmoid(outputs)
@@ -66,17 +58,14 @@ def get_predictions(model, device: torch.device, val_loader):
                         start[i].item(),
                         end[i].item(),
                         cell_line[i],
-                        targets[i].cpu(),
-                        predicted[i].cpu(),
-                        weights[i].cpu(),
-                        outputs[i].cpu(),
-                        inputs,
-                        attributions,
+                        targets[i].cpu().item(),
+                        predicted[i].cpu().item(),
+                        weights[i].cpu().item(),
+                        outputs[i].cpu().item(),
                     ]
                 )
             if (batch_idx + 1) % 50 == 0:
-                print(f"Processed {batch_idx + 1} batches.")
-                break
+                logger.info(f"Processed {batch_idx + 1} batches.")
 
     result_df = pd.DataFrame(
         result,
@@ -89,15 +78,13 @@ def get_predictions(model, device: torch.device, val_loader):
             "predicted",
             "weights",
             "probabilities",
-            "inputs",
-            "attributions",
         ],
     )
 
     return result_df
 
-
 def load_model(model_dir, num_tfs=1):
+
     model = DeepSeq.from_hparams(
         dim=1536,
         depth=11,
@@ -106,31 +93,49 @@ def load_model(model_dir, num_tfs=1):
         num_cell_lines=num_tfs,
         return_augs=True,
         num_downsamples=3,
-    ).to(device)
+    )
 
     model.out = nn.Sequential(
         nn.Linear(model.dim * 2, num_tfs),
         Rearrange("... c o -> ... o c"),
         nn.Linear(512, 1),
         nn.Flatten(),
+    ).to(device)
+
+
+    state_dict = torch.load(
+        os.path.join(model_dir, "best_model.pth"), map_location=device
     )
 
-    # model = transfer_enformer_weights_to_(model, transformer_only=True)
-    state_dict = torch.load(
-        os.path.join(model_dir, "pretrained_weight.pth"), map_location=device
-    )
     modified_state_dict = {
         key.replace("_orig_mod.", ""): value for key, value in state_dict.items()
     }
     model.load_state_dict(modified_state_dict)
 
+
     model.to(device)
 
     return model
 
+def model_fn(model_dir):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model(model_dir, num_tfs=1)
+    logger.info("Model loaded successfully.")
+    return model.to(device)
 
-def predict(input_object: Dataset, model: object):
-    dataloader = DataLoader(
+def input_fn(request_body, request_content_type):
+    logger.info("Reading JSONLines dataset")
+    if request_content_type == 'application/jsonlines':
+        logger.info("Reading JSONLines dataset")
+        file_stream = io.BytesIO(request_body)
+        dataset = JSONLinesDataset(file_stream=file_stream, num_tfs=1, compressed=True)
+    else:
+        raise ValueError(f"Unsupported content type or request body type: {request_content_type}, {type(request_body)}")
+    
+    return dataset
+
+def predict_fn(input_object, model):
+    dataloader = torch.utils.data.DataLoader(
         input_object,
         batch_size=1,
         shuffle=False,
@@ -147,25 +152,21 @@ def predict(input_object: Dataset, model: object):
 
     return result_df
 
+def output_fn(predictions, response_content_type):
+    return predictions.to_json(orient="records")
 
 if __name__ == "__main__":
-    tfrecord_path = "./data/dataset.tfrecord"
+    model = model_fn("/Users/wejarrard/projects/tf-binding/data/model")
 
-    index_path = None
-    description = {
-        "input": "byte",
-        "target": "byte",
-        "weight": "byte",
-        "chr_name": "byte",
-        "start": "int",
-        "end": "int",
-        "cell_line": "byte",
-    }
-    dataset = EnhancedTFRecordDataset(tfrecord_path, index_path, description)
-
-    model_dir = "data"
-    model = load_model(model_dir)
-
-    result_df = predict(dataset, model)
-
-    print(result_df)
+    with open("/Users/wejarrard/projects/tf-binding/data/jsonl/dataset_1.jsonl.gz", "rb") as f:
+        request_body = f.read()
+    
+    dataset = input_fn(request_body, "application/jsonlines")
+    df = predict_fn(dataset, model)
+    output = output_fn(df, "application/json")
+    predictions_df = pd.read_json(output)
+    accuracy = predictions_df['targets'].eq(predictions_df['predicted']).mean()
+    logger.info(output)
+    logger.info(f"Accuracy: {accuracy}")
+    logger.info(f"False positive rate: {predictions_df[predictions_df['targets'] == 0]['predicted'].mean()}")
+    logger.info(f"False negative rate: {predictions_df[predictions_df['targets'] == 1]['predicted'].mean()}")

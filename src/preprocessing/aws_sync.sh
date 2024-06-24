@@ -2,45 +2,56 @@
 
 # Define the array of cell line directories
 CELL_LINES=(
-    "NCI-H660"
+    "HEK_293"
+    "A549"
+    "HuH-7"
+    "K562"
+    "MCF7"
     "22Rv1"
+    "A-375"
+    "C4-2"
     "LNCAP"
     "PC-3"
-    "C42B"
-    "C4-2"
-    "MCF7"
-    "Ramos"
-    "A549"
-    "HT-1376"
-    "K-562"
-    "JURKAT"
-    "Hep_G2"
-    "MCF_10A"
-    "SCaBER"
-    "SEM"
-    "786-O"
-    "Ishikawa"
-    "MOLT-4"
-    "BJ_hTERT"
-    "SIHA"
-    "Detroit_562"
-    "OVCAR-8"
-    "PANC-1"
-    "NCI-H69"
-    "HELA"
-    "HuH-7"
     "THP-1"
-    "U-87_MG"
+    "UM-UC-3"
+    "VCAP"
+    "CAMA-1"
+    "AN3_CA"
+    "HCC1954"
+    "HEC-1-A"
+    "Ishikawa"
+    "MDA-MB-134-VI"
+    "MDA-MB-453"
+    "NCI-H3122"
+    "NCI-H441"
+    "RT4"
+    "SK-BR-3"
+    "GP5D"
+    "LS-180"
+    "CFPAC-1"
+    "GM12878"
+    "MDA-MB-231"
+    "HELA"
     "SK-N-SH"
-    "TC-32"
-    "RS411"
-    "TTC1240"
+    "HMEC"
+    "U2OS"
 )
 
 # Base directory where the cell line directories are located
 base_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines" # Replace with the actual base directory path
 
-# Loop through each cell line
+# Get a list of all cell lines currently in S3
+existing_cell_lines=$(aws s3 ls s3://tf-binding-sites/pretraining/data/cell_lines/ | awk '{print $2}' | sed 's#/##')
+
+# Loop through each existing cell line and remove it if it's not in the CELL_LINES array
+for existing_cell_line in $existing_cell_lines; do
+    if [[ ! " ${CELL_LINES[@]} " =~ " ${existing_cell_line} " ]]; then
+        echo "Removing files for ${existing_cell_line} from S3..."
+        aws s3 rm "s3://tf-binding-sites/pretraining/data/cell_lines/${existing_cell_line}/" --recursive
+    fi
+done
+
+# Loop through each cell line in the list and sync files
 for cell_line in "${CELL_LINES[@]}"; do
     # Source directory path
     src_path="${base_dir}/${cell_line}/pileup_mod_log10/"

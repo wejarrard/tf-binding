@@ -180,7 +180,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
+        bed_file=os.path.join(data_dir, "training_A549.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -201,7 +201,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "test"),
+        bed_file=os.path.join(data_dir, "validation_A549.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -246,7 +246,8 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     early_stopping = EarlyStopping(
         patience=args.early_stopping_patience,
         verbose=True,
-        save_path=f"./pretrained_weight.pth",
+        # save_path=f"./pretrained_weight.pth",
+        save_path="/opt/ml/model/best_model.pth"
     )
 
     ############ TENSORBOARD ############
@@ -259,9 +260,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for epoch in range(hyperparams.num_epochs):
-        if DISTRIBUTED:
-            train_sampler.set_epoch(epoch)
-            valid_sampler.set_epoch(epoch)
 
         train_loss, train_acc = train_one_epoch(
             model=model,

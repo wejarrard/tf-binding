@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader, Dataset
 
 # helper functions
 
+os.environ["HTS_NOCHECK_SAM"] = "1"
+
 
 def exists(val):
     return val is not None
@@ -255,7 +257,7 @@ class GenomicInterval:
         # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
         for row in df.iter_rows(named=True):
             position = row["position"]
-            # count = int(10 ** row["count"])  # Reverse the log base 10 transformation
+            # count = 10 ** row["count"]  # Reverse the log base 10 transformation
 
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
@@ -264,8 +266,8 @@ class GenomicInterval:
             # standardized_count = count / max_count if max_count else 0
 
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = row["count"]
-
+            extended_data[relative_position, 4] = row["count"] #row["count"]
+        
         if not return_augs:
             return extended_data
             # return one_hot
@@ -285,7 +287,7 @@ class TFIntervalDataset(Dataset):
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
         mode="train",
-        num_tfs=2,
+        num_tfs=1,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -336,10 +338,9 @@ class TFIntervalDataset(Dataset):
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        score, label_encoded = self.process_tfs(score, label)
+        label_encoded, score = self.process_tfs(score, label)
 
-        # pileup_dir = self.cell_lines_dir / Path(cell_line)
-        pileup_dir = self.cell_lines_dir / Path(cell_line)
+        pileup_dir = self.cell_lines_dir / "mod_log10" / Path(cell_line)
         if self.mode == "train":
             return (
                 self.processor(
@@ -380,7 +381,7 @@ if __name__ == "__main__":
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
-        shift_augs=(-50, 50),
+        shift_augs=(0, 0),
         context_length=4_096,
         mode="train",
     )
@@ -388,7 +389,7 @@ if __name__ == "__main__":
     train_loader = DataLoader(
         train_dataset,
         batch_size=2,
-        shuffle=True,
+        shuffle=False,
         num_workers=4,
         pin_memory=True,
         drop_last=True,
@@ -396,4 +397,7 @@ if __name__ == "__main__":
 
     for i, data in enumerate(train_loader):
         inputs, targets, weights = data[0], data[1], data[2]
-        print(inputs.shape, targets.shape, weights.shape)
+        print(inputs.shape)
+        print(torch.unique(inputs[:, :, 4], return_counts=True))
+
+        break

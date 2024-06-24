@@ -1,52 +1,24 @@
 import os
-from pathlib import Path
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-import numpy as np
-import tensorflow as tf
-import torch.multiprocessing
+import json
+import gzip
+import argparse
+import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from scripts.base_dataloader import TFIntervalDataset
 
-from training.tf_dataloader import TFIntervalDataset
-
-torch.multiprocessing.set_sharing_strategy("file_system")
-
-
-def _torch_tensor_feature(value):
-    """Returns a bytes_list from a string / byte."""
-    value_byte = value.numpy().astype(np.float64).tobytes(order="C")
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value_byte]))
-
-
-def _string_feature(value):
-    """Returns a bytes_list from a string / byte."""
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value.encode()]))
-
-
-def _string_feature_list(values):
-    """Returns a bytes_list from a list of strings."""
-    # Encode each string in the list into bytes and create a BytesList
-    return tf.train.Feature(
-        bytes_list=tf.train.BytesList(value=[v[0].encode() for v in values])
-    )
-
-
-def _int64_feature(value):
-    """Returns an int64_list from a bool / enum / int / uint."""
-    value = int(value.item())
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-
-
-def main() -> None:
-    data_dir = "training/data"
-    output_dir = "inference/data"
-    base_tfrecords_filename = os.path.join(output_dir, "dataset")
+def main(compression: str, max_file_size: int) -> None:
+    data_dir = "/Users/wejarrard/projects/tf-binding/data"
+    output_dir = "/Users/wejarrard/projects/tf-binding/data/jsonl"
+    base_filename = os.path.join(output_dir, "dataset")
     file_index = 1
-    tfrecords_filename = f"{base_tfrecords_filename}_{file_index}.tfrecord"
+    filename = f"{base_filename}_{file_index}.jsonl"
+
+    if compression == 'gzip':
+        filename += '.gz'
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "AR_val"),
+        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -54,48 +26,45 @@ def main() -> None:
         shift_augs=(0, 0),
         context_length=4_096,
         mode="inference",
-        num_tfs=1,
     )
 
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=8)
 
-    options = tf.io.TFRecordOptions(compression_type="GZIP")
+    max_file_size_bytes = max_file_size * 1024 * 1024  # Convert MB to bytes
 
-    writer = tf.io.TFRecordWriter(tfrecords_filename, options)
-    max_file_size = 99 * 1024 * 1024  # 99 MB in bytes
+    def open_file(filename, mode='wt', encoding='utf-8'):
+        if compression == 'gzip':
+            return gzip.open(filename, mode, encoding=encoding)
+        else:
+            return open(filename, mode, encoding=encoding)
 
-    for item in tqdm(dataloader, desc="Preparing Data"):
-        # Create a feature
-        feature = {
-            "input": _torch_tensor_feature(item[0]),
-            "target": _torch_tensor_feature(item[1]),
-            "weight": _torch_tensor_feature(item[2]),
-            "chr_name": _string_feature(item[3][0]),
-            "start": _int64_feature(item[4]),
-            "end": _int64_feature(item[5]),
-            "cell_line": _string_feature(item[6][0]),
-            # "tf_list": _string_feature_list(item[7]),
-        }
+    with open_file(filename) as jsonl_file:
+        for item in tqdm(dataloader, desc="Preparing Data"):
+            data_point = {
+                "input": item[0].numpy().tolist(),
+                "target": item[1].numpy().tolist(),
+                "weight": item[2].numpy().tolist(),
+                "chr_name": item[3][0],
+                "start": item[4].item(),
+                "end": item[5].item(),
+                "cell_line": item[6][0],
+            }
+            jsonl_file.write(json.dumps(data_point) + '\n')
 
-        # Create an example protocol buffer
-        example = tf.train.Example(features=tf.train.Features(feature=feature))
+            # Check if the current file size exceeds the limit
+            if os.path.getsize(filename) > max_file_size_bytes:
+                jsonl_file.close()
+                file_index += 1  # Increment the file index
+                filename = f"{base_filename}_{file_index}.jsonl"
+                if compression == 'gzip':
+                    filename += '.gz'
+                jsonl_file = open_file(filename)
 
-        # Serialize to string and write on the file
-        writer.write(example.SerializeToString())
-
-        # Check if the current file size exceeds the limit
-        if os.path.getsize(tfrecords_filename) > max_file_size:
-            writer.close()  # Close the current file
-            file_index += 1  # Increment the file index
-            tfrecords_filename = (
-                f"{base_tfrecords_filename}_{file_index}.tfrecord"  # New file name
-            )
-            writer = tf.io.TFRecordWriter(
-                tfrecords_filename, options
-            )  # Create a new writer
-
-    writer.close()  # Ensure the last file is closed properly
-
+        jsonl_file.close()  # Ensure the last file is closed properly
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Prepare data for TF binding.")
+    parser.add_argument('--compression', choices=['gzip', 'none'], default='gzip', help="Specify compression type (gzip or none)")
+    parser.add_argument('--max_file_size', type=int, default=99, help="Specify maximum file size in MB")
+    args = parser.parse_args()
+    main(args.compression, args.max_file_size)
