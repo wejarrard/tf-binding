@@ -15,8 +15,6 @@ from torch.utils.data import DataLoader, Dataset
 
 # helper functions
 
-os.environ["HTS_NOCHECK_SAM"] = "1"
-
 
 def exists(val):
     return val is not None
@@ -257,7 +255,7 @@ class GenomicInterval:
         # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
         for row in df.iter_rows(named=True):
             position = row["position"]
-            # count = 10 ** row["count"]  # Reverse the log base 10 transformation
+            # count = int(10 ** row["count"])  # Reverse the log base 10 transformation
 
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
@@ -266,8 +264,8 @@ class GenomicInterval:
             # standardized_count = count / max_count if max_count else 0
 
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = row["count"] #row["count"]
-        
+            extended_data[relative_position, 4] = row["count"]
+
         if not return_augs:
             return extended_data
             # return one_hot
@@ -287,7 +285,7 @@ class TFIntervalDataset(Dataset):
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
         mode="train",
-        num_tfs=1,
+        num_tfs=2,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
@@ -338,8 +336,9 @@ class TFIntervalDataset(Dataset):
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
-        label_encoded, score = self.process_tfs(score, label)
+        score, label_encoded = self.process_tfs(score, label)
 
+        # pileup_dir = self.cell_lines_dir / Path(cell_line)
         pileup_dir = self.cell_lines_dir / "mod_log10" / Path(cell_line)
         if self.mode == "train":
             return (
@@ -374,30 +373,27 @@ class TFIntervalDataset(Dataset):
 
 
 if __name__ == "__main__":
-    data_dir = "./data"
+    data_dir = "/Users/wejarrard/projects/tf-binding/data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
+        bed_file=os.path.join(data_dir, "22Rv1.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
-        shift_augs=(0, 0),
+        shift_augs=(-50, 50),
         context_length=4_096,
-        mode="train",
+        mode="inference",
     )
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=2,
-        shuffle=False,
+        shuffle=True,
         num_workers=4,
         pin_memory=True,
         drop_last=True,
     )
 
     for i, data in enumerate(train_loader):
-        inputs, targets, weights = data[0], data[1], data[2]
-        print(inputs.shape)
-        print(torch.unique(inputs[:, :, 4], return_counts=True))
-
-        break
+        inputs, labels, scores, chr_names, starts, ends, cell_lines = data
+        print(scores)

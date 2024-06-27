@@ -124,7 +124,6 @@ def model_fn(model_dir):
     return model.to(device)
 
 def input_fn(request_body, request_content_type):
-    logger.info("Reading JSONLines dataset")
     if request_content_type == 'application/jsonlines':
         logger.info("Reading JSONLines dataset")
         file_stream = io.BytesIO(request_body)

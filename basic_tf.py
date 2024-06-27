@@ -16,7 +16,7 @@ validation_cell_lines = args.cell_line if args.cell_line else []
 
 # Directory paths
 input_dir = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/output"
-output_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/output_{tf}.csv"
+output_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/output_{tf}.csv"
 
 # Cell line matching
 cell_lines = {
@@ -123,24 +123,16 @@ for filename in os.listdir(input_dir):
                 # Filter negative samples based on chromosomes
                 neg_df = filter_chromosomes(neg_df).copy()
 
-                # Ensure there are enough negative samples
-                if len(neg_df) < len(filtered_df):
-                    print(f"Not enough negative samples for {cell_line}. Needed: {len(filtered_df)}, Available: {len(neg_df)}. Skipping...")
-                    continue
-
                 # Add a dummy 'count' column for consistency
                 neg_df['count'] = 1
-
-                # Sample an equal number of negative samples
-                neg_samples = neg_df.sample(n=len(filtered_df), random_state=42).copy()
-                neg_samples['cell_line'] = cell_line
-                neg_samples['label'] = 0
+                neg_df['cell_line'] = cell_line
+                neg_df['label'] = 0
 
                 # Append the negative samples to the filtered DataFrame
                 filtered_dfs.append(filtered_df)
-                filtered_dfs.append(neg_samples)
+                filtered_dfs.append(neg_df)
 
-                print(f"{filename}: {len(filtered_df)} positive samples, {len(neg_samples)} negative samples")
+                print(f"{filename}: {len(filtered_df)} positive samples, {len(neg_df)} negative samples")
             else:
                 print(f"Negative samples file not found for cell line {cell_line} at {negative_filepath}")
 
@@ -154,20 +146,18 @@ combined_filtered_df = combined_filtered_df[['chr', 'start', 'end', 'cell_line',
 assert (combined_filtered_df['end'] - combined_filtered_df['start'] <= 4000).all(), "Some intervals are greater than 4000 base pairs!"
 
 # Save the combined filtered DataFrame to the output file
+os.makedirs(f'/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set', exist_ok=True)
 combined_filtered_df.to_csv(output_file, sep='\t', index=False)
 
 print(f"Combined filtered data saved to {output_file}")
-
-os.makedirs(f'/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/data_splits', exist_ok=True)
-
 
 # Generate training and validation sets
 if validation_cell_lines:
     # Combine all specified cell lines into a single validation set
     validation_set = combined_filtered_df[combined_filtered_df['cell_line'].isin(validation_cell_lines)]
     training_set = combined_filtered_df[~combined_filtered_df['cell_line'].isin(validation_cell_lines)]
-    validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/data_splits/validation_combined.csv"
-    training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/data_splits/training_combined.csv"
+    validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/validation_combined.csv"
+    training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/training_combined.csv"
     validation_set.to_csv(validation_set_file, sep='\t', index=False)
     training_set.to_csv(training_set_file, sep='\t', index=False)
     print(f"Combined validation set and training set generated with specified cell lines: {validation_cell_lines}")
@@ -184,9 +174,8 @@ else:
         # Training set is all other cell lines
         training_set = combined_filtered_df[combined_filtered_df['cell_line'] != cell_line]
         # Save the training and validation sets
-        training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/data_splits/training_{cell_line}.csv"
-        validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/data_splits/validation_{cell_line}.csv"
-
+        training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/training_{cell_line}.csv"
+        validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/validation_{cell_line}.csv"
         training_set.to_csv(training_set_file, sep='\t', index=False)
         validation_set.to_csv(validation_set_file, sep='\t', index=False)
 

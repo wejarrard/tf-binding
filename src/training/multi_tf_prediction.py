@@ -175,12 +175,12 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ############ DATA ############
 
     if torch.cuda.device_count() >= 1:
-        num_workers = 6
+        num_workers = 4
     else:
         num_workers = 0
 
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "training_A549.csv"),
+        bed_file=os.path.join(data_dir, "training_combined.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
@@ -201,7 +201,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     )
 
     valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "validation_A549.csv"),
+        bed_file=os.path.join(data_dir, "validation_combined.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         num_tfs=num_tfs,
