@@ -26,7 +26,7 @@ def get_predictions(model, device: torch.device, val_loader):
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line = (
+            inputs, targets, weights, chr_name, start, end, cell_line, enhancer, promotor = (
                 batch["input"],
                 batch["target"],
                 batch["weight"],
@@ -34,6 +34,8 @@ def get_predictions(model, device: torch.device, val_loader):
                 batch["start"],
                 batch["end"],
                 batch["cell_line"],
+                batch["enhancer"],
+                batch["promoter"],
             )
 
             inputs, targets, weights = (
@@ -62,6 +64,8 @@ def get_predictions(model, device: torch.device, val_loader):
                         predicted[i].cpu().item(),
                         weights[i].cpu().item(),
                         outputs[i].cpu().item(),
+                        enhancer[i].cpu().item(),
+                        promotor[i].cpu().item(),
                     ]
                 )
             if (batch_idx + 1) % 50 == 0:
@@ -78,6 +82,8 @@ def get_predictions(model, device: torch.device, val_loader):
             "predicted",
             "weights",
             "probabilities",
+            "enhancer",
+            "promoter",
         ],
     )
 
@@ -136,9 +142,9 @@ def input_fn(request_body, request_content_type):
 def predict_fn(input_object, model):
     dataloader = torch.utils.data.DataLoader(
         input_object,
-        batch_size=1,
+        batch_size=4,
         shuffle=False,
-        num_workers=0,
+        num_workers=4,
         drop_last=False,
         pin_memory=True,
     )
@@ -155,6 +161,7 @@ def output_fn(predictions, response_content_type):
     return predictions.to_json(orient="records")
 
 if __name__ == "__main__":
+    
     model = model_fn("/Users/wejarrard/projects/tf-binding/data/model")
 
     with open("/Users/wejarrard/projects/tf-binding/data/jsonl/dataset_1.jsonl.gz", "rb") as f:

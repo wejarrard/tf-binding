@@ -296,7 +296,7 @@ class TFIntervalDataset(Dataset):
 
         # Initialization for GenomeIntervalDataset
         bed_path = Path(bed_file)
-        assert bed_path.exists(), "path to .bed file must exist"
+        assert bed_path.exists(), f"path to .bed file must exist, current path: {bed_path}"
 
         df = pl.read_csv(str(bed_path), separator="\t")
         df = filter_df_fn(df)
@@ -320,26 +320,39 @@ class TFIntervalDataset(Dataset):
         )
         self.mode = mode
 
-    def process_tfs(self, score: int, label: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return torch.tensor([score]), torch.tensor([label], dtype=torch.float32)
+    def process_tfs(self, score: int, label) -> tuple[torch.Tensor, torch.Tensor]:
+        if type(label) == int:
+            return torch.tensor([score]), torch.tensor([label], dtype=torch.float32)
+        if label == 'FOXA1':
+            label_encoded = torch.tensor([1, 0], dtype=torch.float32)
+        elif label == 'FOXM1':
+            label_encoded = torch.tensor([0, 1], dtype=torch.float32)
+        elif label == 'FOXM1_FOXA1':
+            label_encoded = torch.tensor([1, 1], dtype=torch.float32)
+        else:
+            label_encoded = torch.tensor([0, 0], dtype=torch.float32)
+
+        return torch.tensor([score]), label_encoded
 
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label, score = (
+        chr_name, start, end, cell_line, label, score, region_type_enhancer, region_type_promoter  = (
             interval[0],
             interval[1],
             interval[2],
             interval[3],
             interval[4],
             interval[5],
+            interval[6],
+            interval[7],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
         score, label_encoded = self.process_tfs(score, label)
 
-        # pileup_dir = self.cell_lines_dir / Path(cell_line)
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup"
+        # pileup_dir = self.cell_lines_dir / "mod_log10" / Path(cell_line)
         if self.mode == "train":
             return (
                 self.processor(
@@ -359,6 +372,8 @@ class TFIntervalDataset(Dataset):
                 start,
                 end,
                 cell_line,
+                region_type_enhancer,
+                region_type_promoter,
             )
         else:
             return (
@@ -371,18 +386,17 @@ class TFIntervalDataset(Dataset):
     def __len__(self):
         return len(self.df)
 
-
 if __name__ == "__main__":
-    data_dir = "./data"
+    data_dir = "/Users/wejarrard/projects/tf-binding/data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "validation_THP-1.csv"),
+        bed_file=os.path.join(data_dir, 'data_splits', "training_combined.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
         context_length=4_096,
-        mode="train",
+        mode="inference",
     )
 
     train_loader = DataLoader(
@@ -395,5 +409,5 @@ if __name__ == "__main__":
     )
 
     for i, data in enumerate(train_loader):
-        inputs, targets, weights = data[0], data[1], data[2]
-        print(inputs.shape, targets.shape, weights.shape)
+        inputs, labels, scores, chr_names, starts, ends, cell_lines = data
+        print(scores)

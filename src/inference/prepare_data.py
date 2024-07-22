@@ -18,7 +18,7 @@ def main(compression: str, max_file_size: int) -> None:
         filename += '.gz'
 
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, "22Rv1.csv"),
+        bed_file=os.path.join(data_dir, 'data_splits', "validation_combined.csv"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -48,6 +48,8 @@ def main(compression: str, max_file_size: int) -> None:
                 "start": item[4].item(),
                 "end": item[5].item(),
                 "cell_line": item[6][0],
+                "enhancer": item[7].item(),
+                "promoter": item[8].item(),
             }
             jsonl_file.write(json.dumps(data_point) + '\n')
 
@@ -63,6 +65,9 @@ def main(compression: str, max_file_size: int) -> None:
         jsonl_file.close()  # Ensure the last file is closed properly
 
 if __name__ == "__main__":
+    # remove files from data/jsonl
+    for file in os.listdir("/Users/wejarrard/projects/tf-binding/data/jsonl"):
+        os.remove(os.path.join("/Users/wejarrard/projects/tf-binding/data/jsonl", file))
     parser = argparse.ArgumentParser(description="Prepare data for TF binding.")
     parser.add_argument('--compression', choices=['gzip', 'none'], default='gzip', help="Specify compression type (gzip or none)")
     parser.add_argument('--max_file_size', type=int, default=5, help="Specify maximum file size in MB")

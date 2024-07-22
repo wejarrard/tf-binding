@@ -1,22 +1,22 @@
 import pandas as pd
 import os
 import numpy as np
-import argparse
 import subprocess
+import argparse
 
 # Set up argument parser
 parser = argparse.ArgumentParser(description="Process TF binding data.")
 parser.add_argument("tf", type=str, help="Transcription Factor")
-parser.add_argument("--cell_line", type=str, nargs='*', help="Optional cell lines for validation set")
+parser.add_argument("cell_line", type=str, help="Cell Line")
 
 # Parse arguments
 args = parser.parse_args()
 tf = args.tf
-validation_cell_lines = args.cell_line if args.cell_line else []
+cell_line_input = args.cell_line
 
 # Directory paths
 input_dir = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/output"
-output_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/output_{tf}.csv"
+output_dir = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/tobias/{cell_line_input}"
 
 # Cell line matching
 cell_lines = {
@@ -55,6 +55,16 @@ cell_lines = {
     "U2OS": "U2OS"
 }
 
+# Validate the cell line input
+cell_line = None
+for key, value in cell_lines.items():
+    if value == cell_line_input:
+        cell_line = value
+        break
+
+if not cell_line:
+    raise ValueError(f"Cell line {cell_line_input} is not recognized.")
+
 # Function to filter DataFrame based on given criteria
 def filter_df(df, threshold=4000):
     df = df[df['end'] - df['start'] <= threshold]
@@ -90,9 +100,8 @@ for filename in os.listdir(input_dir):
 
         # Extract cell line name from the file name
         cell_line_key = filename.split('_')[0]
-        cell_line = cell_lines.get(cell_line_key)
 
-        if cell_line:
+        if cell_lines.get(cell_line_key) == cell_line:
             filtered_df['cell_line'] = cell_line
             filtered_df['label'] = 1
 
@@ -102,37 +111,53 @@ for filename in os.listdir(input_dir):
             if os.path.exists(negative_filepath):
                 # Read the negative samples file
                 neg_df = pd.read_csv(negative_filepath, sep="\t", usecols=[0, 1, 2], header=None, names=['chr', 'start', 'end'])
+                
+                # Save the filtered positive dataframe to a temporary file
+                temp_filtered_df_file = f'temp_filtered_df_{tf}.bed'
+                filtered_df[['chr', 'start', 'end']].to_csv(temp_filtered_df_file, sep='\t', index=False, header=False)
 
-                # Convert neg_df to a temporary bed file
-                temp_bed_file = "./temp.bed"
-                neg_df.to_csv(temp_bed_file, sep="\t", index=False, header=False)
+                # Save the negative samples dataframe to a temporary file
+                temp_neg_df_file = f'temp_neg_df_{tf}.bed'
+                neg_df.to_csv(temp_neg_df_file, sep='\t', index=False, header=False)
 
-                # Construct the command to subtract the bed files
-                command = f"bedtools subtract -a {temp_bed_file} -b {input_filepath} > {temp_bed_file}.subtracted"
+                # Use bedtools subtract to find the negative regions
+                temp_subtract_output = f'temp_subtract_output_{tf}.bed'
+                cmd = ['bedtools', 'subtract', '-a', temp_neg_df_file, '-b', temp_filtered_df_file]
+                with open(temp_subtract_output, 'w') as out_f:
+                    result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE)
+                    if result.returncode != 0:
+                        print(f"Error running bedtools subtract: {result.stderr.decode('utf-8')}")
+                        continue
 
-                # Execute the command using subprocess
-                subprocess.run(command, shell=True, check=True)
+                # Check if the output file was created
+                if not os.path.exists(temp_subtract_output):
+                    print(f"Output file {temp_subtract_output} not found.")
+                    continue
 
-                # Read the subtracted bed file into a DataFrame
-                neg_df = pd.read_csv(f"{temp_bed_file}.subtracted", sep="\t", header=None, names=['chr', 'start', 'end'])
-
-                # Remove the temporary bed files
-                os.remove(temp_bed_file)
-                os.remove(f"{temp_bed_file}.subtracted")
+                # Read the output from bedtools subtract
+                neg_df = pd.read_csv(temp_subtract_output, sep="\t", header=None, names=['chr', 'start', 'end'])
 
                 # Filter negative samples based on chromosomes
                 neg_df = filter_chromosomes(neg_df).copy()
 
+                # Ensure there are enough negative samples
+                if len(neg_df) < len(filtered_df):
+                    print(f"Not enough negative samples for {cell_line}. Needed: {len(filtered_df)}, Available: {len(neg_df)}. Skipping...")
+                    continue
+
                 # Add a dummy 'count' column for consistency
                 neg_df['count'] = 1
-                neg_df['cell_line'] = cell_line
-                neg_df['label'] = 0
+
+                # Sample an equal number of negative samples
+                neg_samples = neg_df.sample(n=len(filtered_df), random_state=42).copy()
+                neg_samples['cell_line'] = cell_line
+                neg_samples['label'] = 0
 
                 # Append the negative samples to the filtered DataFrame
                 filtered_dfs.append(filtered_df)
-                filtered_dfs.append(neg_df)
+                filtered_dfs.append(neg_samples)
 
-                print(f"{filename}: {len(filtered_df)} positive samples, {len(neg_df)} negative samples")
+                print(f"{filename}: {len(filtered_df)} positive samples, {len(neg_samples)} negative samples")
             else:
                 print(f"Negative samples file not found for cell line {cell_line} at {negative_filepath}")
 
@@ -146,37 +171,13 @@ combined_filtered_df = combined_filtered_df[['chr', 'start', 'end', 'cell_line',
 assert (combined_filtered_df['end'] - combined_filtered_df['start'] <= 4000).all(), "Some intervals are greater than 4000 base pairs!"
 
 # Save the combined filtered DataFrame to the output file
-os.makedirs(f'/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set', exist_ok=True)
-combined_filtered_df.to_csv(output_file, sep='\t', index=False)
+combined_filtered_df.to_csv(f"{output_dir}/balanced.csv", sep='\t', index=False)
 
-print(f"Combined filtered data saved to {output_file}")
+combined_filtered_df.to_csv(f"{output_dir}/balanced.bed", sep='\t', index=False, header=False)
 
-# Generate training and validation sets
-if validation_cell_lines:
-    # Combine all specified cell lines into a single validation set
-    validation_set = combined_filtered_df[combined_filtered_df['cell_line'].isin(validation_cell_lines)]
-    training_set = combined_filtered_df[~combined_filtered_df['cell_line'].isin(validation_cell_lines)]
-    validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/validation_combined.csv"
-    training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/training_combined.csv"
-    validation_set.to_csv(validation_set_file, sep='\t', index=False)
-    training_set.to_csv(training_set_file, sep='\t', index=False)
-    print(f"Combined validation set and training set generated with specified cell lines: {validation_cell_lines}")
-else:
-    for cell_line in cell_lines.values():
-        cell_line_data = combined_filtered_df[combined_filtered_df['cell_line'] == cell_line]
+print(f"Combined filtered data saved to {output_dir}")
 
-        if len(cell_line_data) == 0:
-            print(f"{cell_line}: did not make threshold, skipping")
-            continue
-
-        # Validation set is the current cell line
-        validation_set = cell_line_data
-        # Training set is all other cell lines
-        training_set = combined_filtered_df[combined_filtered_df['cell_line'] != cell_line]
-        # Save the training and validation sets
-        training_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/training_{cell_line}.csv"
-        validation_set_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set/validation_{cell_line}.csv"
-        training_set.to_csv(training_set_file, sep='\t', index=False)
-        validation_set.to_csv(validation_set_file, sep='\t', index=False)
-
-        print(f"{cell_line}: Training and validation sets generated")
+# Clean up temporary files
+os.remove(temp_filtered_df_file)
+os.remove(temp_neg_df_file)
+os.remove(temp_subtract_output)

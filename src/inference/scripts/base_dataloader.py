@@ -326,13 +326,15 @@ class TFIntervalDataset(Dataset):
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label, score = (
+        chr_name, start, end, cell_line, label, score, region_type_enhancer, region_type_promoter  = (
             interval[0],
             interval[1],
             interval[2],
             interval[3],
             interval[4],
             interval[5],
+            interval[6],
+            interval[7],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
@@ -359,6 +361,8 @@ class TFIntervalDataset(Dataset):
                 start,
                 end,
                 cell_line,
+                region_type_enhancer,
+                region_type_promoter,
             )
         else:
             return (
@@ -370,7 +374,6 @@ class TFIntervalDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
-
 
 if __name__ == "__main__":
     data_dir = "/Users/wejarrard/projects/tf-binding/data"

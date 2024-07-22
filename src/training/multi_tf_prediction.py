@@ -150,7 +150,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
 
     model.out = nn.Sequential(
-        nn.Linear(model.dim * 2, num_tfs),
+        nn.Linear(model.dim * 2, 2),
         Rearrange("... c o -> ... o c"),
         nn.Linear(512, 1),
         nn.Flatten(),
