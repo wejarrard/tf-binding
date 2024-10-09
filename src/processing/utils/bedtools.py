@@ -46,6 +46,8 @@ def subtract_bed_files(df, regions_to_subtract_df):
     os.remove(temp_regions_bed_file)
     os.remove(temp_subtracted_bed_file)
 
+    subtracted_df = subtracted_df.drop_duplicates().sort_values(by=['chr', 'start', 'end']).reset_index(drop=True)
+
     return subtracted_df
 
 def intersect_bed_files(df, regions_to_intersect_df, region_type=None):
@@ -84,6 +86,7 @@ def intersect_bed_files(df, regions_to_intersect_df, region_type=None):
         # Read the intersected bed file into a DataFrame
         intersected_df = pd.read_csv(temp_intersected_bed_file, sep="\t", header=None, usecols=[i for i in range(len(column_names))], names=column_names)
 
+
     intersected_df = intersected_df.drop_duplicates().sort_values(by=['chr', 'start', 'end']).reset_index(drop=True)
 
     # Add region type
@@ -95,5 +98,68 @@ def intersect_bed_files(df, regions_to_intersect_df, region_type=None):
     os.remove(temp_regions_bed_file)
     os.remove(temp_intersected_bed_file)
 
+
+    return intersected_df
+
+
+def intersect_colocalization_bed_files(df, regions_to_intersect_df, region_type=None, count_included=False):
+    """
+    Intersects regions in the regions_to_intersect_df with the df using bedtools.
+
+    Parameters:
+    df (pd.DataFrame): DataFrame containing the main regions with columns ['chr', 'start', 'end', *]. will keep all columns in this DataFrame.
+    regions_to_intersect_df (pd.DataFrame): DataFrame containing regions to intersect with columns ['chr', 'start', 'end'], will drop all columns in this DataFrame.
+    count_included (bool): Whether to include the 'count' column from the regions_to_intersect_df in the output.
+
+    Returns:
+    pd.DataFrame: DataFrame containing intersected regions between df and regions_to_intersect_df, including all columns from both DataFrames.
+    """
+    
+    column_names = df.columns.tolist()
+
+    # Create temporary files
+    with tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_df_bed, \
+         tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_regions_bed, \
+         tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_intersected_bed:
+        
+        temp_df_bed_file = temp_df_bed.name
+        temp_regions_bed_file = temp_regions_bed.name
+        temp_intersected_bed_file = temp_intersected_bed.name
+        
+        # Save dataframes to temporary files
+        df.to_csv(temp_df_bed_file, sep="\t", index=False, header=False)
+        regions_to_intersect_df.to_csv(temp_regions_bed_file, sep="\t", index=False, header=False)
+
+        # Construct the command to intersect the bed files with all columns retained
+        command = f"bedtools intersect -a {temp_df_bed_file} -b {temp_regions_bed_file} -wa -wb > {temp_intersected_bed_file}"
+
+        # Execute the command using subprocess
+        subprocess.run(command, shell=True, check=True)
+        
+        # Read the intersected bed file into a DataFrame
+        intersected_df = pd.read_csv(temp_intersected_bed_file, sep="\t", header=None)
+
+        if count_included:
+            # If count_included is True, include all columns from both dataframes
+            column_indices = [-4, -3, -2, -1] + [i + 3 for i in range(len(column_names) - 3)]
+        else:
+            # Otherwise, keep only the original columns from df
+            column_indices = [-3, -2, -1] + [i + 3 for i in range(len(column_names) - 3)]
+        
+
+        intersected_df = intersected_df.iloc[:, column_indices]
+
+        if count_included:
+            # insert ['count_2'] at the 4th position and push all other columns to the right
+            intersected_df.columns = ['chr', 'start', 'end', 'count_2'] + column_names[3:]
+        else:
+            intersected_df.columns = column_names
+
+    intersected_df = intersected_df.drop_duplicates().sort_values(by=['chr', 'start', 'end']).reset_index(drop=True)
+
+    # Remove the temporary files
+    os.remove(temp_df_bed_file)
+    os.remove(temp_regions_bed_file)
+    os.remove(temp_intersected_bed_file)
 
     return intersected_df

@@ -1,0 +1,1 @@
+docker exec -it chrombpnet_container /bin/bash

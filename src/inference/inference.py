@@ -5,8 +5,11 @@ from sagemaker.pytorch import PyTorchModel
 import time
 
 model_artifact_s3_locations = {
-    "22Rv1-filtered" : "s3://tf-binding-sites/finetuning/results/output/22Rv1-no-promotor-enhancer-2024-07-11-17-32-35-700/output/model.tar.gz",
-    "22Rv1-promoter-enhancer" : "s3://tf-binding-sites/finetuning/results/output/22Rv1-enhancer-promotor-only-fixed-2024-07-12-22-11-22-222/output/model.tar.gz",
+    # "AR-22Rv1" : "s3://tf-binding-sites/finetuning/results/output/22Rv1-enhancer-promotor-only-fixed-2024-07-12-22-11-22-222/output/model.tar.gz",
+    # "FOXA1-22Rv1-full" : "s3://tf-binding-sites/finetuning/results/output/FOXA1-22Rv1-2024-09-05-17-45-03-608/output/model.tar.gz",
+    "RB1Model-on-E2F1" : "s3://tf-binding-sites/finetuning/results/output/RB1-chr7-11-2024-09-17-15-12-17-997/output/model.tar.gz"
+    # "AR-22Rv1-greater-equal" : "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-peak-greater-or-equal-median-2024-08-07-20-00-19-582/output/model.tar.gz",
+    # "AR-22Rv1-no-PE": "s3://tf-binding-sites/finetuning/results/output/22Rv1-no-promotor-enhancer-2024-07-11-17-32-35-700/output/model.tar.gz"
     }
 
 

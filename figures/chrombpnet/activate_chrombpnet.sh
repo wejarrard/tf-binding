@@ -1,0 +1,1 @@
+docker run -it --rm --memory=100g --platform linux/amd64 kundajelab/chrombpnet:latest

@@ -1,0 +1,15 @@
+services:
+  chrombpnet:
+    image: kundajelab/chrombpnet:latest
+    platform: linux/amd64
+    container_name: chrombpnet_container
+    tty: true
+    stdin_open: true
+    volumes:
+      - /Users/wejarrard/projects/tf-binding/src/processing/chrombpnet/data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 100g
+    restart: "no"
+    # user: "${UID}:${GID}"
