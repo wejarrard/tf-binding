@@ -256,6 +256,7 @@ class GenomicInterval:
         for row in df.iter_rows(named=True):
             position = row["position"]
             # count = int(10 ** row["count"])  # Reverse the log base 10 transformation
+            count = np.log10(row["count"]) if row["count"] > 0 else 0
 
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
@@ -264,7 +265,7 @@ class GenomicInterval:
             # standardized_count = count / max_count if max_count else 0
 
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = row["count"]
+            extended_data[relative_position, 4] = count
 
         if not return_augs:
             return extended_data
@@ -326,7 +327,7 @@ class TFIntervalDataset(Dataset):
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, cell_line, label, score, region_type_enhancer, region_type_promoter  = (
+        chr_name, start, end, score, label, cell_line, motifs = (
             interval[0],
             interval[1],
             interval[2],
@@ -334,7 +335,6 @@ class TFIntervalDataset(Dataset):
             interval[4],
             interval[5],
             interval[6],
-            interval[7],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
@@ -361,15 +361,13 @@ class TFIntervalDataset(Dataset):
                 start,
                 end,
                 cell_line,
-                region_type_enhancer,
-                region_type_promoter,
+                motifs
             )
         else:
             return (
                 self.processor(
                     chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
+                )
             )
 
     def __len__(self):

@@ -256,6 +256,7 @@ class GenomicInterval:
         for row in df.iter_rows(named=True):
             position = row["position"]
             # count = int(10 ** row["count"])  # Reverse the log base 10 transformation
+            count = np.log10(row["count"]) if row["count"] > 0 else 0
 
             # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
@@ -264,7 +265,7 @@ class GenomicInterval:
             # standardized_count = count / max_count if max_count else 0
 
             # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = row["count"]
+            extended_data[relative_position, 4] = count
 
         if not return_augs:
             return extended_data

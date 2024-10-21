@@ -167,3 +167,5 @@ data.zip
 local_test/*
 model/
 input/
+umap*
+*.fasta

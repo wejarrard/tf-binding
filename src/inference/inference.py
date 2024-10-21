@@ -1,26 +1,16 @@
 import boto3
 import os
+import argparse
+import json
 from sagemaker import Session
 from sagemaker.pytorch import PyTorchModel
 import time
-
-model_artifact_s3_locations = {
-    # "AR-22Rv1" : "s3://tf-binding-sites/finetuning/results/output/22Rv1-enhancer-promotor-only-fixed-2024-07-12-22-11-22-222/output/model.tar.gz",
-    # "FOXA1-22Rv1-full" : "s3://tf-binding-sites/finetuning/results/output/FOXA1-22Rv1-2024-09-05-17-45-03-608/output/model.tar.gz",
-    "RB1Model-on-E2F1" : "s3://tf-binding-sites/finetuning/results/output/RB1-chr7-11-2024-09-17-15-12-17-997/output/model.tar.gz"
-    # "AR-22Rv1-greater-equal" : "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-peak-greater-or-equal-median-2024-08-07-20-00-19-582/output/model.tar.gz",
-    # "AR-22Rv1-no-PE": "s3://tf-binding-sites/finetuning/results/output/22Rv1-no-promotor-enhancer-2024-07-11-17-32-35-700/output/model.tar.gz"
-    }
-
 
 # Initialize a SageMaker session
 sagemaker_session = Session()
 
 role = "arn:aws:iam::016114370410:role/tf-binding-sites"
-
 local_dir = "/Users/wejarrard/projects/tf-binding/data/jsonl"
-
-# Initialize the S3 client
 s3 = boto3.client('s3')
 
 # Function to delete all objects in a specified S3 bucket/prefix
@@ -33,49 +23,67 @@ def delete_s3_objects(bucket_name, prefix=""):
     else:
         print(f"No objects found in {bucket_name}/{prefix} to delete.")
 
-# Delete existing files from the specified S3 location
-delete_s3_objects(bucket_name="tf-binding-sites", prefix="inference/input")
-for key in model_artifact_s3_locations:
-    delete_s3_objects(bucket_name="tf-binding-sites", prefix=f"inference/output/{key}")
+# Function to parse the model paths from command-line input
+def parse_model_paths(json_input):
+    try:
+        return json.loads(json_input)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON: {e}")
+        return {}
 
-# Upload new files to the specified S3 location
-inputs = sagemaker_session.upload_data(path=local_dir, bucket="tf-binding-sites", key_prefix="inference/input")
-print(f"Input spec: {inputs}")
+if __name__ == "__main__":
+    # Set up argument parser to accept model paths as a JSON input string
+    parser = argparse.ArgumentParser(description='Run SageMaker transform jobs with specified model paths.')
+    parser.add_argument('--model_paths', type=str, required=True, help='JSON input of model paths')
 
-# Create PyTorchModel from saved model artifact
-for cell_line_name, model_artifact_s3_location in model_artifact_s3_locations.items():
-    cell_line_name = f"{cell_line_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}"
-    pytorch_model = PyTorchModel(
-        model_data=model_artifact_s3_location,
-        role=role,
-        framework_version="2.1",
-        py_version="py310",
-        source_dir="/Users/wejarrard/projects/tf-binding/src/inference/scripts",
-        entry_point="inference.py",
-        sagemaker_session=sagemaker_session,
-        name = f"tf-binding-{cell_line_name}"
+    # Parse the command line arguments
+    args = parser.parse_args()
+
+    # Parse the model artifact locations from input
+    model_artifact_s3_locations = parse_model_paths(args.model_paths)
+
+    # Delete existing files from the specified S3 locations
+    delete_s3_objects(bucket_name="tf-binding-sites", prefix="inference/input")
+    for key in model_artifact_s3_locations:
+        delete_s3_objects(bucket_name="tf-binding-sites", prefix=f"inference/output/{key}")
+
+    # Upload new files to the specified S3 location
+    inputs = sagemaker_session.upload_data(path=local_dir, bucket="tf-binding-sites", key_prefix="inference/input")
+    print(f"Input spec: {inputs}")
+
+    # Create PyTorchModel and run transform jobs
+    for cell_line_name, model_artifact_s3_location in model_artifact_s3_locations.items():
+        cell_line_name = f"{cell_line_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}"
+        pytorch_model = PyTorchModel(
+            model_data=model_artifact_s3_location,
+            role=role,
+            framework_version="2.1",
+            py_version="py310",
+            source_dir="/Users/wejarrard/projects/tf-binding/src/inference/scripts",
+            entry_point="inference.py",
+            sagemaker_session=sagemaker_session,
+            name = f"tf-binding-{cell_line_name}"
         )
 
+        # Create transformer from PyTorchModel object
+        output_path = f"s3://tf-binding-sites/inference/output/{cell_line_name}"
+        transformer = pytorch_model.transformer(
+            instance_count=1, 
+            instance_type="ml.g5.2xlarge", 
+            output_path=output_path,
+            strategy="MultiRecord",
+            max_concurrent_transforms=10,
+            max_payload=10,
+        )
 
-    # Create transformer from PyTorchModel object
-    output_path = f"s3://tf-binding-sites/inference/output/{cell_line_name}"
+        # Start the transform job
+        transformer.transform(
+            data=inputs,
+            data_type="S3Prefix",
+            content_type="application/jsonlines",
+            split_type="None",
+            wait=False,
+            job_name=f"{cell_line_name}"
+        )
 
-    transformer = pytorch_model.transformer(instance_count=1, 
-                                            instance_type="ml.g5.2xlarge", 
-                                            output_path=output_path,
-                                            strategy="MultiRecord",
-                                            max_concurrent_transforms=10,
-                                            max_payload=10,
-                                        )
-    # Start the transform job
-    transformer.transform(
-        data=inputs,
-        data_type="S3Prefix",
-        content_type="application/jsonlines",
-        split_type="None",
-        wait=False,
-        job_name=f"{cell_line_name}"
-    )
-
-    print(f"Transformation output saved to: {output_path}")
-
+        print(f"Transformation output saved to: {output_path}")

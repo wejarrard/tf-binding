@@ -7,18 +7,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from scripts.base_dataloader import TFIntervalDataset
 
-def main(compression: str, max_file_size: int) -> None:
-    data_dir = "/Users/wejarrard/projects/tf-binding/data"
-    output_dir = "/Users/wejarrard/projects/tf-binding/data/jsonl"
-    base_filename = os.path.join(output_dir, "dataset")
+def main(compression: str, max_file_size: int, data_dir="/Users/wejarrard/projects/tf-binding/data", output_path="/Users/wejarrard/projects/tf-binding/data/jsonl", input_file = "validation_combined.csv"):
+    base_filename = os.path.join(output_path, "dataset")
     file_index = 1
     filename = f"{base_filename}_{file_index}.jsonl"
 
     if compression == 'gzip':
         filename += '.gz'
-
     dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, 'data_splits', "validation_combined.csv"),
+        bed_file=os.path.join(data_dir, 'data_splits', input_file),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
@@ -48,8 +45,7 @@ def main(compression: str, max_file_size: int) -> None:
                 "start": item[4].item(),
                 "end": item[5].item(),
                 "cell_line": item[6][0],
-                "enhancer": item[7].item(),
-                "promoter": item[8].item(),
+                "motifs": item[7][0]
             }
             jsonl_file.write(json.dumps(data_point) + '\n')
 
@@ -65,11 +61,16 @@ def main(compression: str, max_file_size: int) -> None:
         jsonl_file.close()  # Ensure the last file is closed properly
 
 if __name__ == "__main__":
-    # remove files from data/jsonl
-    for file in os.listdir("/Users/wejarrard/projects/tf-binding/data/jsonl"):
-        os.remove(os.path.join("/Users/wejarrard/projects/tf-binding/data/jsonl", file))
+
     parser = argparse.ArgumentParser(description="Prepare data for TF binding.")
     parser.add_argument('--compression', choices=['gzip', 'none'], default='gzip', help="Specify compression type (gzip or none)")
     parser.add_argument('--max_file_size', type=int, default=5, help="Specify maximum file size in MB")
+    parser.add_argument('--data_dir', type=str, default="/Users/wejarrard/projects/tf-binding/data", help="Specify the output path")
+    parser.add_argument('--output_path', type=str, default="/Users/wejarrard/projects/tf-binding/data/jsonl", help="Specify the output path")
     args = parser.parse_args()
-    main(args.compression, args.max_file_size)
+
+    # remove files from data/jsonl
+    for file in os.listdir(args.output_path):
+        os.remove(os.path.join(args.output_path, file))
+
+    main(args.compression, args.max_file_size, args.data_dir, args.output_path)

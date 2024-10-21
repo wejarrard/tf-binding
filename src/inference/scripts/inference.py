@@ -21,12 +21,22 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 
 def get_predictions(model, device: torch.device, val_loader):
     model.eval()
-
+    
+    # Initialize the activation dictionary
+    activation = {}
+    
+    # Define and register the hook
+    def get_activation(name):
+        def hook(model, input, output):
+            activation[name] = output.detach()
+        return hook
+    hook_handle = model.out[1].register_forward_hook(get_activation('linear_512'))
+    
     result = []
-
+    
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line, enhancer, promotor = (
+            inputs, targets, weights, chr_name, start, end, cell_line, motifs = (
                 batch["input"],
                 batch["target"],
                 batch["weight"],
@@ -34,8 +44,7 @@ def get_predictions(model, device: torch.device, val_loader):
                 batch["start"],
                 batch["end"],
                 batch["cell_line"],
-                batch["enhancer"],
-                batch["promoter"],
+                batch['motifs']
             )
 
             inputs, targets, weights = (
@@ -48,11 +57,16 @@ def get_predictions(model, device: torch.device, val_loader):
             # Get sigmoid transformed outputs
             outputs = torch.sigmoid(outputs)
 
+            # The activations are now stored in activation['linear_512']
+            # Ensure that the activations correspond to the current batch
+            linear_512_outputs = activation['linear_512']
+            # If necessary, apply sigmoid or other transformations
+            # linear_512_outputs = torch.sigmoid(linear_512_outputs)
+            
             # Calculate accuracy
             predicted = (outputs.data > 0.5).float()
 
             # Add to result
-
             for i in range(predicted.shape[0]):
                 result.append(
                     [
@@ -64,13 +78,16 @@ def get_predictions(model, device: torch.device, val_loader):
                         predicted[i].cpu().item(),
                         weights[i].cpu().item(),
                         outputs[i].cpu().item(),
-                        enhancer[i].cpu().item(),
-                        promotor[i].cpu().item(),
+                        linear_512_outputs[i].cpu().numpy(),
+                        motifs[i]
                     ]
                 )
             if (batch_idx + 1) % 50 == 0:
                 logger.info(f"Processed {batch_idx + 1} batches.")
-
+    
+    # Remove the hook after we're done
+    hook_handle.remove()
+    
     result_df = pd.DataFrame(
         result,
         columns=[
@@ -82,8 +99,8 @@ def get_predictions(model, device: torch.device, val_loader):
             "predicted",
             "weights",
             "probabilities",
-            "enhancer",
-            "promoter",
+            "linear_512_output", 
+            "motifs"
         ],
     )
 
