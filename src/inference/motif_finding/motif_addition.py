@@ -16,8 +16,9 @@ def parse_arguments():
     parser.add_argument('--jaspar_file', required=True, help='Path to the JASPAR motif file.')
     parser.add_argument('--reference_genome', required=True, help='Path to the reference genome FASTA file.')
     parser.add_argument('--output_file', required=True, help='Path for the output TSV file.')
-    parser.add_argument('--percentile_cutoff', type=float, default=20, help='Percentile cutoff for motif scores.')
+    parser.add_argument('--percentile_cutoff', type=float, default=0, help='Percentile cutoff for motif scores.')
     parser.add_argument('--min_score', type=float, default=-10, help='Minimum motif score to retain motifs.')
+    parser.add_argument('--top_n', type=int, default=10, help='Number of top motifs to retain.')
     return parser.parse_args()
 
 def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_cutoff=0, min_score=-10, top_n=10):
@@ -191,13 +192,13 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
     
     # Save the updated DataFrames to output files
     try:
-        all_motifs_df.to_csv(output_file, sep='\t', index=False)
-        best_output_file = output_file.replace('.tsv', '_best_motifs.tsv') if output_file.endswith('.tsv') else output_file + '_best_motifs.tsv'
-        top10_output_file = output_file.replace('.tsv', '_top10_motifs.tsv') if output_file.endswith('.tsv') else output_file + '_top10_motifs.tsv'
-        best_motifs_df.to_csv(best_output_file, sep='\t', index=False)
+        best_motifs_df.to_csv(output_file, sep='\t', index=False)
+        all_output_file = output_file.replace('.csv', '_all_motifs.csv') if output_file.endswith('.csv') else output_file + '_all_motifs.csv'
+        top10_output_file = output_file.replace('.csv', '_top10_motifs.csv') if output_file.endswith('.csv') else output_file + '_top10_motifs.csv'
+        all_motifs_df.to_csv(all_output_file, sep='\t', index=False)
         top10_motifs_df.to_csv(top10_output_file, sep='\t', index=False)
-        logging.info(f"All motifs saved to: {output_file}")
-        logging.info(f"Best motifs saved to: {best_output_file}")
+        logging.info(f"Best motifs saved to: {output_file}")
+        logging.info(f"All motifs saved to: {all_output_file}")
         logging.info(f"Top 10 motifs saved to: {top10_output_file}")
     except Exception as e:
         logging.error(f"Failed to save output files: {e}")
@@ -217,5 +218,6 @@ if __name__ == '__main__':
         reference_genome=args.reference_genome,
         output_file=args.output_file,
         percentile_cutoff=args.percentile_cutoff,
-        min_score=args.min_score
+        min_score=args.min_score,
+        top_n=args.top_n
     )

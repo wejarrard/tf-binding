@@ -78,6 +78,45 @@ def parse_arguments():
         help="Use the provided ChIP data for the negative set",
     )
 
+    # New arguments for configurable paths
+    parser.add_argument(
+        "--cell_line_mapping",
+        type=str,
+        default="cell_line_mapping.json",
+        help="Path to cell line mapping JSON file",
+    )
+    parser.add_argument(
+        "--tf_base_dir",
+        type=str,
+        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/transcription_factors",
+        help="Base directory for transcription factors data",
+    )
+    parser.add_argument(
+        "--aligned_chip_data_dir",
+        type=str,
+        default="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines",
+        help="Base directory for aligned ChIP data",
+    )
+    parser.add_argument(
+        "--enhancer_bed",
+        type=str,
+        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-ELS.bed",
+        help="Path to enhancer BED file",
+    )
+    parser.add_argument(
+        "--promoter_bed",
+        type=str,
+        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-PLS.bed",
+        help="Path to promoter BED file",
+    )
+
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/data_splits",
+        help="Output directory for the entire set",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -157,7 +196,7 @@ def balance_labels(df):
     """
     try:
         min_count = df["label"].value_counts().min()
-        balanced_df = df.groupby("label").apply(lambda x: x.sample(min_count)).reset_index(drop=True)
+        balanced_df = df.groupby(["label"])[['chr', 'start', 'end', 'count', 'label', 'cell_line']].apply(lambda x: x.sample(min_count)).reset_index(drop=True)
         return balanced_df
     except Exception as e:
         logging.error(f"Error balancing labels: {e}")
@@ -216,10 +255,11 @@ def process_colocalization(df, cell_line_key, cell_line, args):
     """
     Process colocalization data with another transcription factor.
     """
-    colocalization_filepath = (
-        f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/"
-        f"tfbinding_scripts/scripts/data/transcription_factors/"
-        f"{args.colocalization_tf}/output/{cell_line_key}_{args.colocalization_tf}.bed"
+    colocalization_filepath = os.path.join(
+        args.tf_base_dir,
+        args.colocalization_tf,
+        "output",
+        f"{cell_line_key}_{args.colocalization_tf}.bed"
     )
 
     if not os.path.exists(colocalization_filepath):
@@ -254,9 +294,11 @@ def get_overlapping_and_negative_samples(df1, df2, cell_line, args):
     Get overlapping and negative samples between two DataFrames.
     """
     # Intersect with ATAC-seq data
-    atac_filepath = (
-        f"/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/"
-        f"{cell_line}/peaks/{cell_line}.filtered.broadPeak"
+    atac_filepath = os.path.join(
+        args.aligned_chip_data_dir,
+        cell_line,
+        "peaks",
+        f"{cell_line}.filtered.broadPeak"
     )
 
     atac_df = pd.read_csv(
@@ -271,10 +313,6 @@ def get_overlapping_and_negative_samples(df1, df2, cell_line, args):
     # Intersect with ATAC-seq peaks
     tf1_df = intersect_colocalization_bed_files(df1, atac_df)
     tf2_df = intersect_colocalization_bed_files(df2, atac_df)
-
-    # TODO: Figure out why reverse is slightly different only for overlapping_df
-    # We are also currently losing count for tf2, which could be important
-    # TODO: Keep the count for the second TF, add in storing if only one TF is present
 
     # Get overlapping peaks
     overlapping_df = intersect_colocalization_bed_files(
@@ -301,9 +339,11 @@ def process_negative_samples(df, cell_line, args):
     """
     Process negative samples for the given cell line.
     """
-    negative_filepath = (
-        f"/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/"
-        f"{cell_line}/peaks/{cell_line}.filtered.broadPeak"
+    negative_filepath = os.path.join(
+        args.aligned_chip_data_dir,
+        cell_line,
+        "peaks",
+        f"{cell_line}.filtered.broadPeak"
     )
 
     if not os.path.exists(negative_filepath):
@@ -337,21 +377,19 @@ def process_negative_samples(df, cell_line, args):
 
     return neg_df
 
-def process_enhancer_promoter_regions(combined_df):
+def process_enhancer_promoter_regions(combined_df, args):
     """
     Filter the combined DataFrame for enhancer and promoter regions.
     """
     enhancer_df = pd.read_csv(
-        "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/"
-        "tfbinding_scripts/scripts/data/GRCh38-ELS.bed",
+        args.enhancer_bed,
         sep="\t",
         header=None,
         names=["chr", "start", "end", "EH38D", "EH38E", "feature_type"],
     )
 
     promoter_df = pd.read_csv(
-        "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/"
-        "tfbinding_scripts/scripts/data/GRCh38-PLS.bed",
+        args.promoter_bed,
         sep="\t",
         header=None,
         names=["chr", "start", "end", "EL38D", "EL38E", "feature_type"],
@@ -384,7 +422,7 @@ def split_dataset(combined_df, args):
         training_set = combined_df[~combined_df["chr"].isin(args.validation_chromosomes)]
         logging.info(f"Validation chromosomes: {args.validation_chromosomes}")
     else:
-        validation_set = combined_df.sample(frac=0.2)
+        validation_set = combined_df.sample(frac=0.2, random_state=42)
         training_set = combined_df.drop(validation_set.index)
         logging.info("No validation set specified, using default 20% split")
 
@@ -411,18 +449,13 @@ def main():
 
     # Set up paths
     tf = args.tf
-    input_dir = (
-        f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/"
-        f"tfbinding_scripts/scripts/data/transcription_factors/{tf}/output"
-    )
-    output_dir = os.path.join(
-        "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/",
-        f"tfbinding_scripts/scripts/data/transcription_factors/{tf}/entire_set",
-    )
-    os.makedirs(output_dir, exist_ok=True)
+    input_dir = os.path.join(args.tf_base_dir, tf, "output")
+
+    # Ensure the output directory exists
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # Load cell line mapping
-    cell_lines = load_cell_line_mapping("cell_line_mapping.json")
+    cell_lines = load_cell_line_mapping(args.cell_line_mapping)
 
     # Process BED files
     filtered_dfs = process_bed_files(input_dir, cell_lines, args)
@@ -435,7 +468,7 @@ def main():
 
     # Process enhancer and promoter regions if specified
     # if args.enhancer_promotor_only:
-    #     combined_df = process_enhancer_promoter_regions(combined_df)
+    #     combined_df = process_enhancer_promoter_regions(combined_df, args)
     # else:
     #     combined_df["region_type_enhancer"] = np.nan
     #     combined_df["region_type_promoter"] = np.nan
@@ -446,16 +479,15 @@ def main():
 
     # Balance labels if specified
     if args.balance:
-        if args.colocalization_tf or args.negative_tf:
-            combined_df = combined_df.groupby("cell_line").apply(balance_labels).reset_index(drop=True)
-        else:
-            combined_df = combined_df.groupby("cell_line").apply(balance_labels).reset_index(drop=True)
+        combined_df = combined_df.groupby(["cell_line"])[["chr", "start", "end", "count", "label", "cell_line"]].apply(balance_labels).reset_index(drop=True)
 
     # Split dataset into training and validation sets
     training_set, validation_set = split_dataset(combined_df, args)
 
     # Save datasets
-    save_datasets(training_set, validation_set, output_dir)
+    save_datasets(training_set, validation_set, args.output_dir)
 
 if __name__ == "__main__":
+    # set wd to where this file is
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()
