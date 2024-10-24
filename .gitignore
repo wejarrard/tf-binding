@@ -169,3 +169,4 @@ model/
 input/
 umap*
 *.fasta
+validation_*.csv*
