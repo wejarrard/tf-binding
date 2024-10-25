@@ -2,7 +2,7 @@
 
 # Inputs
 TF_NAME='AR'
-CELL_LINE='22Rv1'
+CELL_LINE='VCAP'
 MODEL_PATHS_JSON="{
     \"Motifs-${TF_NAME}-${CELL_LINE}\": \"s3://tf-binding-sites/finetuning/results/output/AR-Full-Data-Model-2024-10-17-04-20-48-548/output/model.tar.gz\"
 }"
