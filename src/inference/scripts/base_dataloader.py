@@ -327,7 +327,7 @@ class TFIntervalDataset(Dataset):
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
-        chr_name, start, end, score, label, cell_line, motifs = (
+        chr_name, start, end, score, label, cell_line, motifs, motif_score = (
             interval[0],
             interval[1],
             interval[2],
@@ -335,6 +335,7 @@ class TFIntervalDataset(Dataset):
             interval[4],
             interval[5],
             interval[6],
+            interval[7],
         )
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
@@ -362,7 +363,8 @@ class TFIntervalDataset(Dataset):
                 start,
                 end,
                 cell_line,
-                motifs
+                motifs,
+                motif_score
             )
         else:
             return (

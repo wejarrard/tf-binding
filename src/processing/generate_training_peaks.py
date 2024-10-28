@@ -117,6 +117,13 @@ def parse_arguments():
         help="Output directory for the entire set",
     )
 
+    parser.add_argument(
+        "--validation_file",
+        type=str,
+        default="validation_combined.csv",
+        help="Name of validation file (default: validation_combined.csv)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -428,12 +435,12 @@ def split_dataset(combined_df, args):
 
     return training_set, validation_set
 
-def save_datasets(training_set, validation_set, output_dir):
+def save_datasets(training_set, validation_set, output_dir, validation_file):
     """
     Save the training and validation sets to CSV files.
     """
     training_set_file = os.path.join(output_dir, "training_combined.csv")
-    validation_set_file = os.path.join(output_dir, "validation_combined.csv")
+    validation_set_file = os.path.join(output_dir, validation_file)
 
     training_set.to_csv(training_set_file, sep="\t", index=False)
     validation_set.to_csv(validation_set_file, sep="\t", index=False)
@@ -485,7 +492,7 @@ def main():
     training_set, validation_set = split_dataset(combined_df, args)
 
     # Save datasets
-    save_datasets(training_set, validation_set, args.output_dir)
+    save_datasets(training_set, validation_set, args.output_dir, args.validation_file)
 
 if __name__ == "__main__":
     # set wd to where this file is

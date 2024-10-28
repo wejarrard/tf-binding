@@ -36,7 +36,7 @@ def get_predictions(model, device: torch.device, val_loader):
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line, motifs = (
+            inputs, targets, weights, chr_name, start, end, cell_line, motifs, motif_score = (
                 batch["input"],
                 batch["target"],
                 batch["weight"],
@@ -44,7 +44,8 @@ def get_predictions(model, device: torch.device, val_loader):
                 batch["start"],
                 batch["end"],
                 batch["cell_line"],
-                batch['motifs']
+                batch['motifs'],
+                batch['motif_score']
             )
 
             inputs, targets, weights = (
@@ -79,7 +80,8 @@ def get_predictions(model, device: torch.device, val_loader):
                         weights[i].cpu().item(),
                         outputs[i].cpu().item(),
                         linear_512_outputs[i].cpu().numpy(),
-                        motifs[i]
+                        motifs[i],
+                        motif_score[i]
                     ]
                 )
             if (batch_idx + 1) % 50 == 0:
@@ -100,7 +102,8 @@ def get_predictions(model, device: torch.device, val_loader):
             "weights",
             "probabilities",
             "linear_512_output", 
-            "motifs"
+            "motifs",
+            "motif_score"
         ],
     )
 

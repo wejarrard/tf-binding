@@ -100,7 +100,7 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
                 'label': row.label,
                 'cell_line': row.cell_line,
                 'motif_sequence': 'no_motif',
-                'motif_score': np.nan
+                'motif_score': np.float16(-np.inf)
             }
             all_motifs_rows.append(no_motif_row)
             best_motifs_rows.append(no_motif_row)
@@ -132,11 +132,11 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
                 'label': row.label,
                 'cell_line': row.cell_line,
                 'motif_sequence': match_seq,
-                'motif_score': score
+                'motif_score': np.float16(score)
             }
             motifs_found.append(motif_info)
             all_motifs_rows.append(motif_info)
-            scores_collection.append(score)
+            scores_collection.append(np.float16(score))
         
         if not motifs_found:
             # No motifs found; append a 'no_motif' row
@@ -148,7 +148,7 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
                 'label': row.label,
                 'cell_line': row.cell_line,
                 'motif_sequence': 'no_motif',
-                'motif_score': np.nan
+                'motif_score': np.float16(-np.inf)
             }
             best_motifs_rows.append(no_motif_row)
             top10_motifs_rows.append(no_motif_row)
@@ -169,7 +169,7 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
     
     # Calculate percentile threshold
     if scores_collection:
-        percentile_threshold = np.percentile(scores_collection, percentile_cutoff)
+        percentile_threshold = np.float16(np.percentile(scores_collection, percentile_cutoff))
         logging.info(f"Percentile threshold ({percentile_cutoff}%): {percentile_threshold}")
     else:
         percentile_threshold = None
@@ -180,7 +180,7 @@ def add_motifs(tsv_file, jaspar_file, reference_genome, output_file, percentile_
         for df_subset in [all_motifs_df, best_motifs_df, top10_motifs_df]:
             mask = df_subset['motif_score'] < percentile_threshold
             df_subset.loc[mask, 'motif_sequence'] = 'no_motif'
-            df_subset.loc[mask, 'motif_score'] = np.nan
+            df_subset.loc[mask, 'motif_score'] = np.float16(-np.inf)
     
     # Define the desired column order
     desired_columns = ['chr', 'start', 'end', 'count', 'label', 'cell_line', 'motif_sequence', 'motif_score']

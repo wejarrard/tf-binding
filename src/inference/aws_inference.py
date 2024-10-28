@@ -24,24 +24,28 @@ def parse_model_paths(json_input):
         print(f"Error parsing JSON: {e}")
         return {}
 
-def main(args):
+def run_aws_inference_jobs(args):
     # Initialize a SageMaker session
     sagemaker_session = Session()
     s3 = boto3.client('s3')
-
-    # Delete existing files from the specified S3 locations
-    delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=args.input_prefix)
-    for key in args.model_artifact_s3_locations:
-        delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.output_prefix}/{key}")
-
-    # Upload new files to the specified S3 location
-    inputs = sagemaker_session.upload_data(path=args.local_dir, bucket=args.s3_bucket, key_prefix=args.input_prefix)
-    print(f"Input spec: {inputs}")
 
     # Create PyTorchModel and run transform jobs
     for cell_line_name, model_artifact_s3_location in args.model_artifact_s3_locations.items():
         timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
         cell_line_name_with_timestamp = f"{cell_line_name}-{timestamp}"
+
+        # Delete existing files from the specified S3 locations with timestamped paths
+        delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}")
+        delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.output_prefix}/{cell_line_name_with_timestamp}")
+
+        # Upload new files to the specified S3 location with timestamped path
+        inputs = sagemaker_session.upload_data(
+            path=args.local_dir, 
+            bucket=args.s3_bucket, 
+            key_prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}"
+        )
+        print(f"Input spec: {inputs}")
+
         pytorch_model = PyTorchModel(
             model_data=model_artifact_s3_location,
             role=args.iam_role,
@@ -212,4 +216,4 @@ if __name__ == "__main__":
     # Parse the model artifact locations from input
     args.model_artifact_s3_locations = parse_model_paths(args.model_paths)
 
-    main(args)
+    run_aws_inference_jobs(args)
