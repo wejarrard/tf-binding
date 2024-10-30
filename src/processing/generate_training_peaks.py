@@ -19,14 +19,13 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     stream=sys.stdout,
 )
-
 def parse_arguments():
     """
     Parse command-line arguments using argparse.
     """
     parser = argparse.ArgumentParser(description="Process TF binding data.")
 
-    parser.add_argument("tf", type=str, help="Transcription Factor")
+    parser.add_argument("--tf", type=str, help="Transcription Factor")
     parser.add_argument(
         "--balance", action="store_true", help="Balance the labels in the datasets"
     )
@@ -124,6 +123,25 @@ def parse_arguments():
         help="Name of validation file (default: validation_combined.csv)",
     )
 
+    parser.add_argument(
+        "--no_ground_truth",
+        action="store_true",
+        help="Prepare data for prediction without ground truth labels",
+    )
+
+    parser.add_argument(
+        "--input_bed_file",
+        type=str,
+        help="Input BED file path for prediction",
+    )
+
+    parser.add_argument(
+        "--output_file",
+        type=str,
+        default="prediction_data.csv",
+        help="Output file name (default: prediction_data.csv)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -132,6 +150,13 @@ def parse_arguments():
 
     if args.negative_tf:
         raise NotImplementedError("The feature 'negative_tf' is not implemented yet")
+
+    if args.no_ground_truth:
+        if not args.input_bed_file:
+            parser.error("--input_bed_file is required when --no_ground_truth is set")
+    else:
+        if not args.tf:
+            parser.error("--tf is required unless --no_ground_truth is set")
 
     return args
 
@@ -203,7 +228,7 @@ def balance_labels(df):
     """
     try:
         min_count = df["label"].value_counts().min()
-        balanced_df = df.groupby(["label"])[['chr', 'start', 'end', 'count', 'label', 'cell_line']].apply(lambda x: x.sample(min_count)).reset_index(drop=True)
+        balanced_df = df.groupby("label").apply(lambda x: x.sample(min_count)).reset_index(drop=True)
         return balanced_df
     except Exception as e:
         logging.error(f"Error balancing labels: {e}")
@@ -409,9 +434,6 @@ def process_enhancer_promoter_regions(combined_df, args):
     # Combine and one-hot encode region types
     combined_filtered_df = pd.concat([enhancer_intersect, promoter_intersect])
 
-    # TODO: Could add in test set option, as well as the option to just sample for the validation set
-    # TODO: Could oversample minority class instead of undersampling majority class to keep data
-
     combined_filtered_df = pd.get_dummies(combined_filtered_df, columns=["region_type"])
 
     return combined_filtered_df
@@ -447,54 +469,91 @@ def save_datasets(training_set, validation_set, output_dir, validation_file):
 
     logging.info(f"Training set saved to: {training_set_file}")
     logging.info(f"Validation set saved to: {validation_set_file}")
-
 def main():
     """
     Main function to orchestrate the processing of TF binding data.
     """
     args = parse_arguments()
 
-    # Set up paths
-    tf = args.tf
-    input_dir = os.path.join(args.tf_base_dir, tf, "output")
-
     # Ensure the output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load cell line mapping
-    cell_lines = load_cell_line_mapping(args.cell_line_mapping)
+    if args.no_ground_truth:
+        # Process the input BED file for prediction
+        if not args.input_bed_file:
+            logging.error("--input_bed_file is required when --no_ground_truth is set")
+            return
+        # Read the input BED file
+        df = pd.read_csv(
+            args.input_bed_file,
+            sep="\t",
+            header=None,
+            names=["chr", "start", "end"],
+            usecols=[0,1,2]
+        )
 
-    # Process BED files
-    filtered_dfs = process_bed_files(input_dir, cell_lines, args)
-    if not filtered_dfs:
-        logging.error("No data processed. Exiting.")
-        return
+        # Filter peaks and chromosomes
+        df = filter_peak_lengths(df)
+        df = filter_chromosomes(df)
+        # Optionally process enhancer and promoter regions
+        # if args.enhancer_promotor_only:
+        #     df = process_enhancer_promoter_regions(df, args)
+        # else:
+        #     df["region_type_enhancer"] = np.nan
+        #     df["region_type_promoter"] = np.nan
 
-    # Combine DataFrames
-    combined_df = pd.concat(filtered_dfs, ignore_index=True)
+        df['count'] = -1
 
-    # Process enhancer and promoter regions if specified
-    # if args.enhancer_promotor_only:
-    #     combined_df = process_enhancer_promoter_regions(combined_df, args)
-    # else:
-    #     combined_df["region_type_enhancer"] = np.nan
-    #     combined_df["region_type_promoter"] = np.nan
+        # Add label column with -1
+        df['label'] = -1
+        # cell line is input bed file name
 
-    # Keep only positive samples if specified
-    if args.positive_only:
-        combined_df = combined_df[combined_df["label"] == 1]
+        df['cell_line'] = args.input_bed_file.split('/')[-1].split('.')[0]
 
-    # Balance labels if specified
-    if args.balance:
-        combined_df = combined_df.groupby(["cell_line"])[["chr", "start", "end", "count", "label", "cell_line"]].apply(balance_labels).reset_index(drop=True)
+        # Save the processed data to a file
+        output_file = os.path.join(args.output_dir, args.output_file)
+        df.to_csv(output_file, sep="\t", index=False)
+        logging.info(f"Prediction data saved to: {output_file}")
+    else:
+        # Proceed with the original processing
+        # Set up paths
+        tf = args.tf
+        input_dir = os.path.join(args.tf_base_dir, tf, "output")
 
-    # Split dataset into training and validation sets
-    training_set, validation_set = split_dataset(combined_df, args)
+        # Load cell line mapping
+        cell_lines = load_cell_line_mapping(args.cell_line_mapping)
 
-    # Save datasets
-    save_datasets(training_set, validation_set, args.output_dir, args.validation_file)
+        # Process BED files
+        filtered_dfs = process_bed_files(input_dir, cell_lines, args)
+        if not filtered_dfs:
+            logging.error("No data processed. Exiting.")
+            return
+
+        # Combine DataFrames
+        combined_df = pd.concat(filtered_dfs, ignore_index=True)
+
+        # Process enhancer and promoter regions if specified
+        # if args.enhancer_promotor_only:
+        #     combined_df = process_enhancer_promoter_regions(combined_df, args)
+        # else:
+        #     combined_df["region_type_enhancer"] = np.nan
+        #     combined_df["region_type_promoter"] = np.nan
+
+        # Keep only positive samples if specified
+        if args.positive_only:
+            combined_df = combined_df[combined_df["label"] == 1]
+
+        # Balance labels if specified
+        if args.balance:
+            combined_df = combined_df.groupby("cell_line").apply(balance_labels).reset_index(drop=True)
+
+        # Split dataset into training and validation sets
+        training_set, validation_set = split_dataset(combined_df, args)
+
+        # Save datasets
+        save_datasets(training_set, validation_set, args.output_dir, args.validation_file)
 
 if __name__ == "__main__":
-    # set wd to where this file is
+    # Set working directory to the script's directory
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()
