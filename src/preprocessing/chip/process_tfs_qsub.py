@@ -1,9 +1,11 @@
 import os
 import subprocess
 
+base_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/preprocessing/chip"
+
 # List of transcription factors
 tf_list = [
-    "FOXA2"
+    "FOXA1"#, "AR", "NEUROD1", "ASCL1", 'RB1'
 ]
 # tf_list = [
 #     'ASCL1', 'FOXA1', 'NR3C1', 'HDAC3', 'HOXB13', 'HDAC1', 'TP53', 'TRIM24', 'LEO1', 'SMARCA5', 'INO80', 'SMARCA4', 
@@ -39,7 +41,7 @@ for tf in tf_list:
 #$ -pe smp 6
 #$ -l mem_free=16G
 #$ -cwd 
-#$ -o logs/{tf}.out
+#$ -o {base_dir}/{log_dir}/{tf}.out
 #$ -j y
 #$ -V
 echo "sourcing bashrc"
@@ -47,7 +49,7 @@ source /data1/home/wjarrard/.bashrc
 echo "activating conda environment"
 conda activate processing
 
-cd /data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/bed_file_aggregation
+cd {base_dir}
 
 echo "Running colocalization script for {tf}"
 ./basic_tf.sh {tf}

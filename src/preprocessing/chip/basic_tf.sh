@@ -4,7 +4,7 @@
 
 # Define transcription factors
 # Path to the JSON file
-json_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/processing/cell_line_mapping.json"
+json_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/utils/cell_line_mapping.json"
 
 # Function to load the JSON file and create an associative array
 declare -A cell_lines

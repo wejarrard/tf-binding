@@ -171,3 +171,5 @@ umap*
 *.fasta
 validation_*.csv*
 sratoolkit*
+*logs*
+qsub_scripts*
