@@ -84,8 +84,8 @@ def get_predictions(model, device: torch.device, val_loader):
                         # motif_score[i].item()
                     ]
                 )
-            if (batch_idx + 1) % 50 == 0:
-                logger.info(f"Processed {batch_idx + 1} batches.")
+            # if (batch_idx + 1) % 50 == 0:
+            #     logger.info(f"Processed {batch_idx + 1} batches.")
     
     # Remove the hook after we're done
     hook_handle.remove()

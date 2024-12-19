@@ -113,6 +113,17 @@ def mask_sequence(input_tensor, mask_prob=0.15, mask_value=-1):
     labels[~mask] = -1
     return masked_tensor, labels
 
+
+def gaussian_smooth_1d(values: torch.Tensor, kernel_size: int = 15, sigma: float = 2.0) -> torch.Tensor:
+    kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+    kernel = torch.exp(-torch.arange(-(kernel_size // 2), kernel_size // 2 + 1) ** 2 / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    kernel = kernel.view(1, 1, -1)
+    values = values.view(1, 1, -1)
+    padding = (kernel_size - 1) // 2
+    smoothed = F.conv1d(values, kernel, padding=padding)
+    return smoothed.view(-1, 1)
+
 class GenomicInterval:
     def __init__(self, fasta_file, context_length=None, return_seq_indices=False, shift_augs=None, rc_aug=False):
         fasta_file = Path(fasta_file)
@@ -178,15 +189,28 @@ class GenomicInterval:
         if should_rc_aug:
             one_hot = one_hot_reverse_complement(one_hot)
 
-        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.long)
+        # Replace the pileup processing section with:
+        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.float)
         extended_data = torch.cat((one_hot, reads_tensor), dim=-1)
         df = process_pileups(pileup_dir, chr_name, start, end)
 
+        max_count = df["count"].max() if df.height > 0 else 1
+        min_count = df["count"].min() if df.height > 0 else 0
+        min_range = -1
+        max_range = 1
+        range_size = max_range - min_range
+        count_range = max(max_count - min_count, 1)
+
         for row in df.iter_rows(named=True):
             position = row["position"]
-            count = np.log10(row["count"]) if row["count"] > 0 else 0
+            count = row["count"]
             relative_position = position - start - 1
-            extended_data[relative_position, 4] = count
+            scaled_count = (count - min_count) / count_range * range_size + min_range
+            reads_tensor[relative_position, 0] = scaled_count
+
+        # Apply Gaussian smoothing
+        smoothed_reads = gaussian_smooth_1d(reads_tensor)
+        extended_data = torch.cat((one_hot, smoothed_reads), dim=-1)
 
         if not return_augs:
             return extended_data

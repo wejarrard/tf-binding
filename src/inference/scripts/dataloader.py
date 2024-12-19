@@ -75,5 +75,7 @@ if __name__ == "__main__":
 
     data = next(iter(dataloader))
 
+    print("data shape: ", data["input"].shape)
+
     for key, value in data.items():
         print(f"{key}: {value}")

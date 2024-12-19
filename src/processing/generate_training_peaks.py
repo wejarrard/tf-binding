@@ -142,6 +142,13 @@ def parse_arguments():
         help="Output file name (default: prediction_data.csv)",
     )
 
+    parser.add_argument(
+        "--negative_regions_bed",
+        type=str,
+        nargs="+",
+        help="Path(s) to BED file(s) containing regions to use for negative samples"
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -366,11 +373,7 @@ def get_overlapping_and_negative_samples(df1, df2, cell_line, args):
     negative_df["count_2"] = 0
 
     return overlapping_df, negative_df
-
 def process_negative_samples(df, cell_line, args):
-    """
-    Process negative samples for the given cell line.
-    """
     negative_filepath = os.path.join(
         args.aligned_chip_data_dir,
         cell_line,
@@ -384,7 +387,6 @@ def process_negative_samples(df, cell_line, args):
         )
         return pd.DataFrame()
 
-    # Read negative samples
     neg_df = pd.read_csv(
         negative_filepath,
         sep="\t",
@@ -394,20 +396,61 @@ def process_negative_samples(df, cell_line, args):
     )
     neg_df = filter_peak_lengths(neg_df)
     neg_df = filter_chromosomes(neg_df)
-
-    # Subtract positive samples
     neg_df = subtract_bed_files(neg_df, df[["chr", "start", "end"]])
-    neg_df["cell_line"] = cell_line
-    neg_df["label"] = 0
-    neg_df["count"] = 0
 
-    # TODO: If sum(df['label'] == 1) == 0, then don't add to filtered_dfs
+    if args.negative_regions_bed:
+        neg_df_overlapping = pd.DataFrame()
+        
+        # Process each negative regions bed file
+        for bed_file in args.negative_regions_bed:
+            negative_regions_df = pd.read_csv(
+                bed_file,
+                sep="\t",
+                header=None,
+                names=["chr", "start", "end"]
+            )
+            negative_regions_df = filter_chromosomes(negative_regions_df)
+            
+            # Intersect with current negative regions
+            current_overlap = intersect_bed_files(neg_df, negative_regions_df)
+            neg_df_overlapping = pd.concat([neg_df_overlapping, current_overlap], ignore_index=True)
+        
+        # Remove duplicates that might occur from overlapping regions
+        neg_df_overlapping = neg_df_overlapping.drop_duplicates(subset=["chr", "start", "end"])
+        
+        num_positives = df.shape[0]
+        num_negatives_needed = num_positives
+        num_negatives_current = neg_df_overlapping.shape[0]
+
+        if num_negatives_current < num_negatives_needed:
+            remaining_neg_df = neg_df[
+                ~neg_df.apply(tuple, axis=1).isin(neg_df_overlapping.apply(tuple, axis=1))
+            ]
+            num_additional_negatives = num_negatives_needed - num_negatives_current
+            additional_negatives = remaining_neg_df.sample(
+                n=min(num_additional_negatives, len(remaining_neg_df)),
+                replace=False
+            )
+            additional_negatives["cell_line"] = cell_line
+            additional_negatives["label"] = 0
+            additional_negatives["count"] = 0
+
+            neg_df_final = pd.concat([neg_df_overlapping, additional_negatives], ignore_index=True)
+        else:
+            neg_df_final = neg_df_overlapping.sample(n=num_negatives_needed, replace=False)
+
+    else:
+        neg_df_final = neg_df
+
+    neg_df_final["cell_line"] = cell_line
+    neg_df_final["label"] = 0
+    neg_df_final["count"] = 0
 
     logging.info(
-        f"Cell line: {cell_line}; Positive samples: {df.shape[0]}, Negative samples: {neg_df.shape[0]}"
+        f"Cell line: {cell_line}; Positive samples: {df.shape[0]}, Negative samples: {neg_df_final.shape[0]}"
     )
 
-    return neg_df
+    return neg_df_final
 
 def process_enhancer_promoter_regions(combined_df, args):
     """

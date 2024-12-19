@@ -5,7 +5,7 @@ TF_NAME='AR'
 CELL_LINE='SRR12455437'
 input_file="AR_SRR12455437"
 MODEL_PATHS_JSON="{
-    \"Motifs-${TF_NAME}-${CELL_LINE}\": \"s3://tf-binding-sites/finetuning/results/output/AR-Full-Data-Model-2024-10-17-04-20-48-548/output/model.tar.gz\"
+    \"POSITIVE-ONLY-${TF_NAME}-${CELL_LINE}\": \"s3://tf-binding-sites/finetuning/results/output/AR-Full-Data-Model-2024-10-17-04-20-48-548/output/model.tar.gz\"
 }"
 
 
@@ -13,8 +13,8 @@ no_ground_truth=TRUE
 input_bed_file="/data1/datasets_1/human_prostate_PDX/processed/ATAC/${CELL_LINE}/peaks/${CELL_LINE}.filtered.broadPeak"
 
 # Only relevent if no_ground_truth is FALSE
-balance=TRUE
-positive_only=FALSE
+balance=FALSE
+positive_only=TRUE
 path_to_project="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
 
 

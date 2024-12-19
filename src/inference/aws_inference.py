@@ -5,8 +5,14 @@ import json
 from sagemaker import Session
 from sagemaker.pytorch import PyTorchModel
 import time
+import boto3
+import os
+import argparse
+import json
+from sagemaker import Session
+from sagemaker.pytorch import PyTorchModel
+import time
 
-# Function to delete all objects in a specified S3 bucket/prefix
 def delete_s3_objects(s3_client, bucket_name, prefix=""):
     response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
     if 'Contents' in response:
@@ -16,7 +22,6 @@ def delete_s3_objects(s3_client, bucket_name, prefix=""):
     else:
         print(f"No objects found in {bucket_name}/{prefix} to delete.")
 
-# Function to parse the model paths from command-line input
 def parse_model_paths(json_input):
     try:
         return json.loads(json_input)
@@ -28,23 +33,28 @@ def run_aws_inference_jobs(args):
     # Initialize a SageMaker session
     sagemaker_session = Session()
     s3 = boto3.client('s3')
+    
+    # Store job names for return
+    job_names = {}
 
     # Create PyTorchModel and run transform jobs
     for cell_line_name, model_artifact_s3_location in args.model_artifact_s3_locations.items():
         timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
         cell_line_name_with_timestamp = f"{cell_line_name}-{timestamp}"
+        
+        # Store the job name
+        job_names[cell_line_name] = cell_line_name_with_timestamp
 
-        # Delete existing files from the specified S3 locations with timestamped paths
+        # Delete existing files from the specified S3 locations
         delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}")
         delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.output_prefix}/{cell_line_name_with_timestamp}")
 
-        # Upload new files to the specified S3 location with timestamped path
+        # Upload new files
         inputs = sagemaker_session.upload_data(
             path=args.local_dir, 
             bucket=args.s3_bucket, 
             key_prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}"
         )
-        print(f"Input spec: {inputs}")
 
         pytorch_model = PyTorchModel(
             model_data=model_artifact_s3_location,
@@ -61,7 +71,6 @@ def run_aws_inference_jobs(args):
                 "SAGEMAKER_MODEL_SERVER_WORKERS": "4"}
         )
 
-        # Create transformer from PyTorchModel object
         output_path = f"s3://{args.s3_bucket}/{args.output_prefix}/{cell_line_name_with_timestamp}"
         transformer = pytorch_model.transformer(
             instance_count=args.instance_count,
@@ -72,18 +81,19 @@ def run_aws_inference_jobs(args):
             max_payload=args.max_payload,
         )
 
-        # Start the transform job
+        # Start transform job
         transformer.transform(
             data=inputs,
             data_type="S3Prefix",
             content_type=args.content_type,
             split_type=args.split_type,
-            wait=False,
             job_name=f"{cell_line_name_with_timestamp}"
         )
 
-        print(f"Transformation output saved to: {output_path}")
+        print(f"Transformation job started: {cell_line_name_with_timestamp}")
+        print(f"Output will be saved to: {output_path}")
 
+    return job_names
 if __name__ == "__main__":
     # Set up argument parser to accept configurable parameters
     parser = argparse.ArgumentParser(description='Run SageMaker transform jobs with specified model paths.')
@@ -220,4 +230,14 @@ if __name__ == "__main__":
     # Parse the model artifact locations from input
     args.model_artifact_s3_locations = parse_model_paths(args.model_paths)
 
-    run_aws_inference_jobs(args)
+    # Run jobs and get job names
+    job_names = run_aws_inference_jobs(args)
+    
+    # Write job names to a file for later use
+    output_file = os.path.join(args.project_path, "data", "job_names.json")
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    with open(output_file, 'w') as f:
+        json.dump(job_names, f)
+    
+    print(f"Job names saved to: {output_file}")
