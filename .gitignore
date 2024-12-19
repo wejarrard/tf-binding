@@ -170,3 +170,4 @@ input/
 umap*
 *.fasta
 validation_*.csv*
+sratoolkit*

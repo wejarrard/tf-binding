@@ -5,106 +5,197 @@ import json
 from sagemaker import Session
 from sagemaker.pytorch import PyTorchModel
 import time
-import boto3
-import os
-import argparse
-import json
-from sagemaker import Session
-from sagemaker.pytorch import PyTorchModel
-import time
+from typing import Dict, Any
+from pathlib import Path
+import sys
 
-def delete_s3_objects(s3_client, bucket_name, prefix=""):
-    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+def setup_s3_client():
+    """Initialize S3 client"""
+    return boto3.client('s3')
+
+def clean_s3_path(s3_client: Any, bucket: str, prefix: str) -> None:
+    """Clean existing files from S3 path"""
+    response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
     if 'Contents' in response:
         for item in response['Contents']:
-            s3_client.delete_object(Bucket=bucket_name, Key=item['Key'])
-        print(f"Deleted all objects in {bucket_name}/{prefix}")
-    else:
-        print(f"No objects found in {bucket_name}/{prefix} to delete.")
+            s3_client.delete_object(Bucket=bucket, Key=item['Key'])
+        print(f"Cleaned up {bucket}/{prefix}")
 
-def parse_model_paths(json_input):
-    try:
-        return json.loads(json_input)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON: {e}")
-        return {}
+def create_job_name(cell_line: str, sample: str) -> str:
+    """Create unique job name with timestamp"""
+    timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
+    return f"{cell_line}-{sample}-{timestamp}"
 
-def run_aws_inference_jobs(args):
-    # Initialize a SageMaker session
-    sagemaker_session = Session()
-    s3 = boto3.client('s3')
+def create_pytorch_model(
+    job_name: str,
+    model_path: str,
+    args: Any,
+    sagemaker_session: Session
+) -> PyTorchModel:
+    """Create and configure PyTorch model"""
+    return PyTorchModel(
+        model_data=model_path,
+        role=args.iam_role,
+        framework_version=args.framework_version,
+        py_version=args.py_version,
+        source_dir=os.path.join(args.project_path, args.source_dir),
+        entry_point=args.entry_point,
+        sagemaker_session=sagemaker_session,
+        name=f"{args.model_name_prefix}-{job_name}",
+        env={
+            "TS_MAX_RESPONSE_SIZE": "100000000",
+            "TS_DEFAULT_STARTUP_TIMEOUT": "600",
+            'TS_DEFAULT_RESPONSE_TIMEOUT': '1000',
+            "SAGEMAKER_MODEL_SERVER_WORKERS": "4"
+        }
+    )
+
+def run_transform_job(
+    transformer: Any,
+    input_data: str,
+    job_name: str,
+    args: Any
+) -> None:
+    """Run transformation job"""
+    transformer.transform(
+        data=input_data,
+        data_type="S3Prefix",
+        content_type=args.content_type,
+        split_type=args.split_type,
+        job_name=job_name
+    )
+
+def save_job_names(job_names: Dict[str, str], output_path: str) -> None:
+    """Save job names to file"""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w') as f:
+        json.dump(job_names, f, indent=2)
+    print(f"Job names saved to: {output_path}")
+
+
+def load_model_paths(json_path: str, model: str) -> Dict[str, str]:
+    """
+    Load and validate model path from JSON file for specified model
     
-    # Store job names for return
-    job_names = {}
-
-    # Create PyTorchModel and run transform jobs
-    for cell_line_name, model_artifact_s3_location in args.model_artifact_s3_locations.items():
-        timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
-        cell_line_name_with_timestamp = f"{cell_line_name}-{timestamp}"
+    Args:
+        json_path: Path to JSON file containing model paths
+        model: Name of model to load path for
         
-        # Store the job name
-        job_names[cell_line_name] = cell_line_name_with_timestamp
+    Returns:
+        Dict with single model name and path
+        
+    Raises:
+        FileNotFoundError: If JSON file doesn't exist
+        ValueError: If JSON content is invalid or model not found
+    """
+    if not Path(json_path).exists():
+        raise FileNotFoundError(f"Model paths JSON file not found: {json_path}")
+        
+    try:
+        with open(json_path) as f:
+            model_paths = json.load(f)
+            
+        if not isinstance(model_paths, dict):
+            raise ValueError("Model paths must be a JSON object")
+            
+        if model not in model_paths:
+            raise ValueError(f"Model {model} not found in paths file")
+            
+        path = model_paths[model]
+        # Remove path existence check since S3 paths can't be validated locally
+        return {model: path}
+        
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in {json_path}: {str(e)}")
+    
 
-        # Delete existing files from the specified S3 locations
-        delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}")
-        delete_s3_objects(s3, bucket_name=args.s3_bucket, prefix=f"{args.output_prefix}/{cell_line_name_with_timestamp}")
+def run_aws_inference_jobs(args: Any) -> Dict[str, str]:
+    """Main function to run AWS inference jobs with improved error handling"""
+    try:
+        # Load and validate model paths from file
+        model_paths = load_model_paths(args.model_paths_file, args.model)
+            
+        sagemaker_session = Session()
+        s3 = setup_s3_client()
+        job_names = {}
+        
+        for cell_line_name, model_path in model_paths.items():
+            # Create unique job name
+            job_name = create_job_name(cell_line_name, args.sample)
+            job_names[cell_line_name] = job_name
+            
+            try:
+                # Clean S3 paths
+                for prefix in [f"{args.input_prefix}/{job_name}", f"{args.output_prefix}/{job_name}"]:
+                    clean_s3_path(s3, args.s3_bucket, prefix)
+                
+                # Upload input data
+                inputs = sagemaker_session.upload_data(
+                    path=args.local_dir,
+                    bucket=args.s3_bucket,
+                    key_prefix=f"{args.input_prefix}/{job_name}"
+                )
+                
+                # Create and configure model
+                pytorch_model = create_pytorch_model(job_name, model_path, args, sagemaker_session)
+                
+                # Configure transformer
+                transformer = pytorch_model.transformer(
+                    instance_count=args.instance_count,
+                    instance_type=args.instance_type,
+                    output_path=f"s3://{args.s3_bucket}/{args.output_prefix}/{job_name}",
+                    strategy=args.strategy,
+                    max_concurrent_transforms=args.max_concurrent_transforms,
+                    max_payload=args.max_payload
+                )
+                
+                # Run transform job
+                run_transform_job(transformer, inputs, job_name, args)
+                print(f"Started job: {job_name}")
+                
+            except Exception as e:
+                print(f"Error processing {cell_line_name}: {str(e)}")
+                continue
+                
+        return job_names
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to run inference jobs: {str(e)}")
 
-        # Upload new files
-        inputs = sagemaker_session.upload_data(
-            path=args.local_dir, 
-            bucket=args.s3_bucket, 
-            key_prefix=f"{args.input_prefix}/{cell_line_name_with_timestamp}"
-        )
-
-        pytorch_model = PyTorchModel(
-            model_data=model_artifact_s3_location,
-            role=args.iam_role,
-            framework_version=args.framework_version,
-            py_version=args.py_version,
-            source_dir=os.path.join(args.project_path, args.source_dir),
-            entry_point=args.entry_point,
-            sagemaker_session=sagemaker_session,
-            name=f"{args.model_name_prefix}-{cell_line_name_with_timestamp}",
-            env={"TS_MAX_RESPONSE_SIZE": "100000000",
-                "TS_DEFAULT_STARTUP_TIMEOUT": "600",
-                'TS_DEFAULT_RESPONSE_TIMEOUT': '1000',
-                "SAGEMAKER_MODEL_SERVER_WORKERS": "4"}
-        )
-
-        output_path = f"s3://{args.s3_bucket}/{args.output_prefix}/{cell_line_name_with_timestamp}"
-        transformer = pytorch_model.transformer(
-            instance_count=args.instance_count,
-            instance_type=args.instance_type,
-            output_path=output_path,
-            strategy=args.strategy,
-            max_concurrent_transforms=args.max_concurrent_transforms,
-            max_payload=args.max_payload,
-        )
-
-        # Start transform job
-        transformer.transform(
-            data=inputs,
-            data_type="S3Prefix",
-            content_type=args.content_type,
-            split_type=args.split_type,
-            job_name=f"{cell_line_name_with_timestamp}"
-        )
-
-        print(f"Transformation job started: {cell_line_name_with_timestamp}")
-        print(f"Output will be saved to: {output_path}")
-
-    return job_names
-if __name__ == "__main__":
-    # Set up argument parser to accept configurable parameters
+def get_parser() -> argparse.ArgumentParser:
+    """Set up and return argument parser with updated model paths argument"""
     parser = argparse.ArgumentParser(description='Run SageMaker transform jobs with specified model paths.')
 
-    # Project and directory configurations
+    parser.add_argument(
+        '--model',
+        type=str,
+        required=True,
+        help='Name of the model to use for inference'
+    )
+
+    parser.add_argument(
+        '--sample',
+        type=str,
+        required=True,
+        help='Name of the sample to use for inference'
+    )
+
+    # Update model paths argument to take file path
+    parser.add_argument(
+        '--model_paths_file',
+        type=str,
+        required=True,
+        help='Path to JSON file containing model paths'
+    )
+    
+    # Rest of the arguments remain the same
     parser.add_argument(
         '--project_path',
         type=str,
         default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding",
-        help='Root path of the project (default: "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding")'
+        help='Root path of the project'
     )
+
     parser.add_argument(
         '--local_dir',
         type=str,
@@ -150,13 +241,6 @@ if __name__ == "__main__":
         help='S3 prefix for output data (default: "inference/output")'
     )
 
-    # Model configurations
-    parser.add_argument(
-        '--model_paths',
-        type=str,
-        required=True,
-        help='JSON input of model paths'
-    )
     parser.add_argument(
         '--framework_version',
         type=str,
@@ -224,20 +308,20 @@ if __name__ == "__main__":
         help='Prefix for the model name (default: "tf-binding")'
     )
 
-    # Parse the command line arguments
+    return parser
+
+if __name__ == "__main__":
+    parser = get_parser()
     args = parser.parse_args()
-
-    # Parse the model artifact locations from input
-    args.model_artifact_s3_locations = parse_model_paths(args.model_paths)
-
-    # Run jobs and get job names
-    job_names = run_aws_inference_jobs(args)
     
-    # Write job names to a file for later use
-    output_file = os.path.join(args.project_path, "data", "job_names.json")
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    with open(output_file, 'w') as f:
-        json.dump(job_names, f)
-    
-    print(f"Job names saved to: {output_file}")
+    try:
+        # Run jobs and save job names
+        job_names = run_aws_inference_jobs(args)
+        
+        # Save job names for downstream processing
+        output_file = os.path.join(args.project_path, "data", "job_names.json")
+        save_job_names(job_names, output_file)
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        sys.exit(1)
