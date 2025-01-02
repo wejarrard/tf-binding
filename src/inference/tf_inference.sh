@@ -146,13 +146,15 @@ process_model_cell_line() {
     
     echo "Running inference for ${input_file}..."
     echo "Using model path: ${MODEL_PATH}"
-    python "${path_to_project}/src/inference/aws_inference.py" \
+    
+    # Run inference and capture job name
+    job_name=$(python "${path_to_project}/src/inference/aws_inference.py" \
         --model "${MODEL}" \
         --sample "${CELL_LINE}" \
         --model_paths_file "${MODEL_JSON_PATH}" \
         --project_path "${path_to_project}" \
-        --local_dir "${path_to_project}/data/jsonl/${input_file}"
-    
+        --local_dir "${path_to_project}/data/jsonl/${input_file}")
+        
     echo "Completed: $CELL_LINE - $MODEL"
 }
 
@@ -163,8 +165,8 @@ main() {
     MODEL_JSON_PATH="${path_to_project}/src/inference/models.json"
     
     # Cell lines and models
-    CELL_LINES=("SRR12455433" "SRR12455434" "SRR12455435" "SRR12455432" "SRR12455437" 
-                "SRR12455436" "SRR12455439" "SRR12455440" "SRR12455441" "SRR12455442" "SRR12455445")
+    CELL_LINES=("SRR12455433" "SRR12455434" "SRR12455435" "SRR12455432" "SRR12455437")
+                # "SRR12455436" "SRR12455439" "SRR12455440" "SRR12455441" "SRR12455442" "SRR12455445")
     MODELS_TO_USE=("NEUROD1-chr3")
     
     # Processing flags
@@ -175,6 +177,10 @@ main() {
     
     # Setup conda environment
     setup_conda
+    
+    # Create download queue file
+    rm -f "${path_to_project}/data/download_queue.txt"
+    touch "${path_to_project}/data/download_queue.txt"
     
     # Export functions and variables for parallel
     export -f process_model_cell_line
@@ -194,15 +200,9 @@ main() {
     parallel --progress --jobs 4 --colsep ' ' \
         process_model_cell_line {1} {2} {3} {4} {5} {6} {7} {8} < "$temp_file"
     
-    # Cleanup temp file
-    rm "$temp_file"
-    
-    # Download results
-    echo "Starting downloads from S3..."
-    mkdir -p "${path_to_project}/data/processed_results"
-    
-    # Download results in parallel
-    parallel --jobs 4 python download_results.py {1} {2} ::: "${MODELS_TO_USE[@]}" ::: "${CELL_LINES[@]}"
+    # Cleanup
+    rm -f "$temp_file"
+    rm -f "${path_to_project}/data/download_queue.txt"
     
     echo "All processing complete."
 }

@@ -2,16 +2,19 @@ import boto3
 import os
 import argparse
 import json
+import pandas as pd
 from sagemaker import Session
 from sagemaker.pytorch import PyTorchModel
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 import sys
 
-def setup_s3_client():
-    """Initialize S3 client"""
-    return boto3.client('s3')
+def setup_aws_clients() -> Tuple[Session, boto3.client]:
+    """Initialize AWS and SageMaker sessions"""
+    session = Session()
+    s3_client = boto3.client('s3')
+    return session, s3_client
 
 def clean_s3_path(s3_client: Any, bucket: str, prefix: str) -> None:
     """Clean existing files from S3 path"""
@@ -21,10 +24,82 @@ def clean_s3_path(s3_client: Any, bucket: str, prefix: str) -> None:
             s3_client.delete_object(Bucket=bucket, Key=item['Key'])
         print(f"Cleaned up {bucket}/{prefix}")
 
+def ensure_clean_directory(directory: str) -> None:
+    """Ensure directory exists and is empty"""
+    dir_path = Path(directory)
+    if dir_path.exists():
+        for file_path in dir_path.glob('*'):
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Warning: Could not delete {file_path}: {e}")
+    else:
+        dir_path.mkdir(parents=True)
+
 def create_job_name(cell_line: str, sample: str) -> str:
     """Create unique job name with timestamp"""
     timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
     return f"{cell_line}-{sample}-{timestamp}"
+
+def download_s3_files(
+    s3_client: Any,
+    bucket: str,
+    prefix: str,
+    local_dir: str,
+    max_retries: int = 3
+) -> bool:
+    """Download files from S3 with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+            if 'Contents' not in response:
+                print(f"No files found in s3://{bucket}/{prefix}")
+                return False
+
+            for obj in response['Contents']:
+                key = obj['Key']
+                if key.endswith('/'):
+                    continue
+                    
+                local_path = Path(local_dir) / Path(key).name
+                s3_client.download_file(bucket, key, str(local_path))
+                print(f'Downloaded {key} to {local_path}')
+            return True
+            
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                print(f"Attempt {attempt + 1} failed. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                print(f"Failed to download after {max_retries} attempts: {e}")
+                return False
+
+def process_jsonl_files(directory: str) -> Optional[pd.DataFrame]:
+    """Combine JSONL files into a DataFrame"""
+    try:
+        json_files = list(Path(directory).glob('*.jsonl.gz.out'))
+        if not json_files:
+            print(f"No JSONL files found in {directory}")
+            return None
+
+        dfs = []
+        for file in json_files:
+            try:
+                df = pd.read_json(file)
+                dfs.append(df)
+            except Exception as e:
+                print(f"Error processing {file}: {e}")
+                continue
+
+        if not dfs:
+            return None
+
+        return pd.concat(dfs, ignore_index=True)
+
+    except Exception as e:
+        print(f"Error processing JSONL files: {e}")
+        return None
 
 def create_pytorch_model(
     job_name: str,
@@ -43,10 +118,10 @@ def create_pytorch_model(
         sagemaker_session=sagemaker_session,
         name=f"{args.model_name_prefix}-{job_name}",
         env={
-            "TS_MAX_RESPONSE_SIZE": "100000000",
+            "TS_MAX_RESPONSE_SIZE": "500000000",
             "TS_DEFAULT_STARTUP_TIMEOUT": "600",
-            'TS_DEFAULT_RESPONSE_TIMEOUT': '1000',
-            "SAGEMAKER_MODEL_SERVER_WORKERS": "4"
+            'TS_DEFAULT_RESPONSE_TIMEOUT': '10000',
+            "SAGEMAKER_MODEL_SERVER_WORKERS": "2"
         }
     )
 
@@ -65,102 +140,81 @@ def run_transform_job(
         job_name=job_name
     )
 
-def save_job_names(job_names: Dict[str, str], output_path: str) -> None:
-    """Save job names to file"""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w') as f:
-        json.dump(job_names, f, indent=2)
-    print(f"Job names saved to: {output_path}")
-
-
-def load_model_paths(json_path: str, model: str) -> Dict[str, str]:
-    """
-    Load and validate model path from JSON file for specified model
+def save_and_process_results(
+    job_name: str,
+    args: Any,
+    s3_client: Any
+) -> Optional[pd.DataFrame]:
+    """Download and process results after job completion"""
+    output_dir = f"{args.project_path}/data/jsonl_output/{args.model}-{args.sample}"
+    ensure_clean_directory(output_dir)
     
-    Args:
-        json_path: Path to JSON file containing model paths
-        model: Name of model to load path for
-        
-    Returns:
-        Dict with single model name and path
-        
-    Raises:
-        FileNotFoundError: If JSON file doesn't exist
-        ValueError: If JSON content is invalid or model not found
-    """
-    if not Path(json_path).exists():
-        raise FileNotFoundError(f"Model paths JSON file not found: {json_path}")
-        
+    s3_prefix = f"inference/output/{job_name}/"
+    if download_s3_files(s3_client, args.s3_bucket, s3_prefix, output_dir):
+        df = process_jsonl_files(output_dir)
+        if df is not None:
+            output_file = f"{args.project_path}/data/processed_results/{args.model}_{args.sample}_processed.csv"
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            df.to_csv(output_file, index=False, header=True, sep='\t')
+            print(f"Results saved to {output_file}")
+        return df
+    return None
+
+def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
+    """Run complete inference pipeline including download and processing"""
     try:
-        with open(json_path) as f:
+        # Initialize AWS clients
+        sagemaker_session, s3_client = setup_aws_clients()
+        
+        # Create job name
+        job_name = create_job_name(args.model, args.sample)
+        
+        # Clean S3 paths
+        for prefix in [f"{args.input_prefix}/{job_name}", f"{args.output_prefix}/{job_name}"]:
+            clean_s3_path(s3_client, args.s3_bucket, prefix)
+        
+        # Upload input data
+        inputs = sagemaker_session.upload_data(
+            path=args.local_dir,
+            bucket=args.s3_bucket,
+            key_prefix=f"{args.input_prefix}/{job_name}"
+        )
+        
+        # Load model path from JSON
+        with open(args.model_paths_file) as f:
             model_paths = json.load(f)
             
-        if not isinstance(model_paths, dict):
-            raise ValueError("Model paths must be a JSON object")
+        if args.model not in model_paths:
+            raise ValueError(f"Model {args.model} not found in paths file")
             
-        if model not in model_paths:
-            raise ValueError(f"Model {model} not found in paths file")
-            
-        path = model_paths[model]
-        # Remove path existence check since S3 paths can't be validated locally
-        return {model: path}
+        model_path = model_paths[args.model]
         
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON format in {json_path}: {str(e)}")
-    
-
-def run_aws_inference_jobs(args: Any) -> Dict[str, str]:
-    """Main function to run AWS inference jobs with improved error handling"""
-    try:
-        # Load and validate model paths from file
-        model_paths = load_model_paths(args.model_paths_file, args.model)
-            
-        sagemaker_session = Session()
-        s3 = setup_s3_client()
-        job_names = {}
+        # Create and configure model
+        pytorch_model = create_pytorch_model(job_name, model_path, args, sagemaker_session)
         
-        for cell_line_name, model_path in model_paths.items():
-            # Create unique job name
-            job_name = create_job_name(cell_line_name, args.sample)
-            job_names[cell_line_name] = job_name
-            
-            try:
-                # Clean S3 paths
-                for prefix in [f"{args.input_prefix}/{job_name}", f"{args.output_prefix}/{job_name}"]:
-                    clean_s3_path(s3, args.s3_bucket, prefix)
-                
-                # Upload input data
-                inputs = sagemaker_session.upload_data(
-                    path=args.local_dir,
-                    bucket=args.s3_bucket,
-                    key_prefix=f"{args.input_prefix}/{job_name}"
-                )
-                
-                # Create and configure model
-                pytorch_model = create_pytorch_model(job_name, model_path, args, sagemaker_session)
-                
-                # Configure transformer
-                transformer = pytorch_model.transformer(
-                    instance_count=args.instance_count,
-                    instance_type=args.instance_type,
-                    output_path=f"s3://{args.s3_bucket}/{args.output_prefix}/{job_name}",
-                    strategy=args.strategy,
-                    max_concurrent_transforms=args.max_concurrent_transforms,
-                    max_payload=args.max_payload
-                )
-                
-                # Run transform job
-                run_transform_job(transformer, inputs, job_name, args)
-                print(f"Started job: {job_name}")
-                
-            except Exception as e:
-                print(f"Error processing {cell_line_name}: {str(e)}")
-                continue
-                
-        return job_names
+        # Configure transformer
+        transformer = pytorch_model.transformer(
+            instance_count=args.instance_count,
+            instance_type=args.instance_type,
+            output_path=f"s3://{args.s3_bucket}/{args.output_prefix}/{job_name}",
+            strategy=args.strategy,
+            max_concurrent_transforms=args.max_concurrent_transforms,
+            max_payload=args.max_payload
+        )
+        
+        # Run transform job
+        run_transform_job(transformer, inputs, job_name, args)
+        print(f"Started job: {job_name}")
+        
+        # Wait for job completion (you might want to implement a more sophisticated waiting mechanism)
+        time.sleep(args.wait_time)
+        
+        # Process and save results
+        return save_and_process_results(job_name, args, s3_client)
         
     except Exception as e:
-        raise RuntimeError(f"Failed to run inference jobs: {str(e)}")
+        print(f"Error in inference pipeline: {str(e)}")
+        return None
 
 def get_parser() -> argparse.ArgumentParser:
     """Set up and return argument parser with updated model paths argument"""
@@ -309,19 +363,19 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     return parser
-
 if __name__ == "__main__":
     parser = get_parser()
     args = parser.parse_args()
     
     try:
-        # Run jobs and save job names
-        job_names = run_aws_inference_jobs(args)
-        
-        # Save job names for downstream processing
-        output_file = os.path.join(args.project_path, "data", "job_names.json")
-        save_job_names(job_names, output_file)
-        
+        df = run_inference_pipeline(args)
+        if df is not None:
+            print("Pipeline completed successfully")
+            sys.exit(0)
+        else:
+            print("Pipeline failed")
+            sys.exit(1)
+            
     except Exception as e:
         print(f"Error: {str(e)}")
         sys.exit(1)

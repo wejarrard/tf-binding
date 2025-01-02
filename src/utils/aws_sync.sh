@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Base directory where the cell line directories are located
-base_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines" # Replace with the actual base directory path
+base_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
 
 # Path to the JSON mapping file
-json_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/processing/cell_line_mapping.json"
+json_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/utils/cell_line_mapping.json"
 
 # Check if jq is installed
 if ! command -v jq &> /dev/null

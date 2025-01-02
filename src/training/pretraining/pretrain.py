@@ -14,8 +14,6 @@ import torch.distributed as dist
 import torch.nn as nn
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
-from finetune import HeadAdapterWrapper
-from loss import FocalLoss
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split

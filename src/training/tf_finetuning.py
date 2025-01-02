@@ -28,7 +28,7 @@ def main():
     # Generate peaks command
     command = [
         'python',
-        os.path.join(args.path_to_project, 'src', 'processing', 'generate_training_peaks.py'),
+        os.path.join(args.path_to_project, 'src', 'utils', 'generate_training_peaks.py'),
         '--tf', args.tf_name,
         '--balance'
     ]
@@ -64,7 +64,7 @@ def main():
     estimator = PyTorch(
         base_job_name=f"{validation_identifier}-gaussian-smoothing",
         entry_point=args.entry_point,
-        source_dir=os.path.join(args.path_to_project, 'src', 'training'),
+        source_dir=os.path.join(args.path_to_project, 'src', 'training', 'tf_finetuning'),
         output_path=f"s3://{args.s3_bucket}/finetuning/results/output",
         code_location=f"s3://{args.s3_bucket}/finetuning/results/code",
         role=args.role,

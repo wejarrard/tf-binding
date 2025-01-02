@@ -23,6 +23,7 @@ TARGET_LENGTH = 896
 # solution came from @johahi
 
 DIR = Path(os.environ.get("SM_CHANNEL_TRAINING", Path(__file__).parents[0]))
+TF_GAMMAS = torch.load(str(DIR / "precomputed" / "tf_gammas.pt"))
 
 # helpers
 
@@ -142,11 +143,17 @@ def get_positional_features_gamma(
 def get_positional_embed(seq_len, feature_size, device, use_tf_gamma):
     distances = torch.arange(-seq_len + 1, seq_len, device=device)
 
+    assert (
+        not use_tf_gamma or seq_len == 1536
+    ), "if using tf gamma, only sequence length of 1536 allowed for now"
+
     feature_functions = [
         get_positional_features_exponential,
         get_positional_features_central_mask,
         (
             get_positional_features_gamma
+            if not use_tf_gamma
+            else always(TF_GAMMAS.to(device))
         ),
     ]
 
@@ -256,29 +263,12 @@ class TargetLengthCrop(nn.Module):
         return x[:, -trim:trim]
 
 
-# Create unique activation modules
-class UniqueGELU(nn.Module):
-    def __init__(self, instance_id):
-        super().__init__()
-        self.instance_id = instance_id
-        
-    def forward(self, x):
-        return F.gelu(x)
-
-class UniqueReLU(nn.Module):
-    def __init__(self, instance_id):
-        super().__init__()
-        self.instance_id = instance_id
-        
-    def forward(self, x):
-        return F.relu(x)
-
-# Modified ConvBlock with unique activations
-def ConvBlock(dim, dim_out=None, kernel_size=1, is_distributed=None, activation_id=None):
+def ConvBlock(dim, dim_out=None, kernel_size=1, is_distributed=None):
     batchnorm_klass = MaybeSyncBatchnorm(is_distributed=is_distributed)
+
     return nn.Sequential(
         batchnorm_klass(dim),
-        UniqueGELU(f"conv_block_{activation_id}"),
+        GELU(),
         nn.Conv1d(dim, default(dim_out, dim), kernel_size, padding=kernel_size // 2),
     )
 
@@ -363,6 +353,8 @@ class Attention(nn.Module):
 
 
 # main class
+
+
 class DeepSeq(PreTrainedModel):
     config_class = EnformerConfig
     base_model_prefix = "enformer"
@@ -376,17 +368,17 @@ class DeepSeq(PreTrainedModel):
         self.dim = config.dim
         half_dim = config.dim // 2
         twice_dim = config.dim * 2
-        activation_counter = 0
 
         # create stem
+
         self.stem = nn.Sequential(
             nn.Conv1d(5, half_dim, 15, padding=7),
-            Residual(ConvBlock(half_dim, activation_id=activation_counter)),
+            Residual(ConvBlock(half_dim)),
             AttentionPool(half_dim, pool_size=2),
         )
-        activation_counter += 1
 
         # create conv tower
+
         filter_list = exponential_linspace_int(
             half_dim,
             config.dim,
@@ -396,21 +388,26 @@ class DeepSeq(PreTrainedModel):
         filter_list = [half_dim, *filter_list]
 
         conv_layers = []
-        for layer_idx, (dim_in, dim_out) in enumerate(zip(filter_list[:-1], filter_list[1:])):
+        for dim_in, dim_out in zip(filter_list[:-1], filter_list[1:]):
             conv_layers.append(
                 nn.Sequential(
-                    ConvBlock(dim_in, dim_out, kernel_size=5, activation_id=f"conv_{activation_counter}"),
-                    Residual(ConvBlock(dim_out, dim_out, 1, activation_id=f"res_{activation_counter}")),
+                    ConvBlock(dim_in, dim_out, kernel_size=5),
+                    Residual(ConvBlock(dim_out, dim_out, 1)),
                     AttentionPool(dim_out, pool_size=2),
                 )
             )
-            activation_counter += 1
 
         self.conv_tower = nn.Sequential(*conv_layers)
 
+        # whether to use tensorflow gamma positions
+
+        use_tf_gamma = config.use_tf_gamma
+        self.use_tf_gamma = use_tf_gamma
+
         # transformer
+
         transformer = []
-        for i in range(config.depth):
+        for _ in range(config.depth):
             transformer.append(
                 nn.Sequential(
                     Residual(
@@ -424,7 +421,7 @@ class DeepSeq(PreTrainedModel):
                                 dropout=config.attn_dropout,
                                 pos_dropout=config.pos_dropout,
                                 num_rel_pos_features=config.dim // config.heads,
-                                use_tf_gamma=config.use_tf_gamma,
+                                use_tf_gamma=use_tf_gamma,
                             ),
                             nn.Dropout(config.dropout_rate),
                         )
@@ -434,7 +431,7 @@ class DeepSeq(PreTrainedModel):
                             nn.LayerNorm(config.dim),
                             nn.Linear(config.dim, config.dim * 2),
                             nn.Dropout(config.dropout_rate),
-                            UniqueReLU(f"transformer_{i}"),
+                            nn.ReLU(),
                             nn.Linear(config.dim * 2, config.dim),
                             nn.Dropout(config.dropout_rate),
                         )
@@ -444,34 +441,51 @@ class DeepSeq(PreTrainedModel):
 
         self.transformer = nn.Sequential(*transformer)
 
-        # final pointwise
-        self.final_pointwise = nn.Sequential(
-            Rearrange("b n d -> b d n"),
-            ConvBlock(filter_list[-1], twice_dim, 1, activation_id="final_1"),
-            Rearrange("b d n -> b n d"),
-            nn.Dropout(config.dropout_rate / 8),
-            UniqueGELU("final_2"),
-        )
+        # target cropping
 
-        # Rest of the model remains the same...
         self.target_length = config.target_length
         self.crop_final = TargetLengthCrop(config.target_length)
 
-        self._trunk = nn.Sequential(
+        # final pointwise
+
+        self.final_pointwise = nn.Sequential(
             Rearrange("b n d -> b d n"),
-            self.stem,
-            self.conv_tower,
+            ConvBlock(filter_list[-1], twice_dim, 1),
             Rearrange("b d n -> b n d"),
-            self.transformer,
-            self.crop_final,
-            self.final_pointwise,
+            nn.Dropout(config.dropout_rate / 8),
+            GELU(),
         )
 
+        # create trunk sequential module
+
+        self._trunk = nn.Sequential(
+            # PrintShape(name="Input"),
+            Rearrange("b n d -> b d n"),
+            # PrintShape(name="After Rearrange 1"),
+            self.stem,
+            # PrintShape(name="After Stem"),
+            self.conv_tower,
+            # PrintShape(name="After Conv Tower"),
+            Rearrange("b d n -> b n d"),
+            # PrintShape(name="After Rearrange 2"),
+            self.transformer,
+            # PrintShape(name="After Transformer"),
+            self.crop_final,
+            # PrintShape(name="After Crop Final"),
+            self.final_pointwise,
+            # PrintShape(name="After Final Pointwise"),
+        )
+
+        # create final heads for human and mouse
         self.out = nn.Sequential(
+            # PrintShape(name="Head In"),
             nn.Linear(self.dim * 2, 1),
+            # PrintShape(name="Linear"),
             Rearrange("... () -> ..."),
             nn.Linear(512, config.num_cell_lines),
         )
+
+        # use checkpointing on transformer trunk
 
         self.use_checkpointing = config.use_checkpointing
 
@@ -552,3 +566,16 @@ class DeepSeq(PreTrainedModel):
 
 
 # from pretrained function
+
+
+def from_pretrained(name, use_tf_gamma=None, **kwargs):
+    enformer = Enformer.from_pretrained(name, **kwargs)
+
+    if name == "EleutherAI/enformer-official-rough":
+        use_tf_gamma = default(use_tf_gamma, True)
+
+        for module in enformer.modules():
+            if isinstance(module, Attention):
+                module.use_tf_gamma = use_tf_gamma
+
+    return enformer
