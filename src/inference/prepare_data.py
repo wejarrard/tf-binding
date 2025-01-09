@@ -125,7 +125,7 @@ def gaussian_smooth_1d(values: torch.Tensor, kernel_size: int = 15, sigma: float
     return smoothed.view(-1, 1)
 
 class GenomicInterval:
-    def __init__(self, fasta_file, context_length=None, return_seq_indices=False, shift_augs=None, rc_aug=False):
+    def __init__(self, fasta_file, context_length=None, return_seq_indices=False, shift_augs=None, rc_aug=False, use_smoothing=True):
         fasta_file = Path(fasta_file)
         assert fasta_file.exists(), "Path to FASTA file must exist"
         self.fasta_path = str(fasta_file)
@@ -133,6 +133,7 @@ class GenomicInterval:
         self.context_length = context_length
         self.shift_augs = shift_augs
         self.rc_aug = rc_aug
+        self.use_smoothing = use_smoothing
 
     @property
     def seqs(self):
@@ -208,9 +209,11 @@ class GenomicInterval:
             scaled_count = (count - min_count) / count_range * range_size + min_range
             reads_tensor[relative_position, 0] = scaled_count
 
-        # Apply Gaussian smoothing
-        smoothed_reads = gaussian_smooth_1d(reads_tensor)
-        extended_data = torch.cat((one_hot, smoothed_reads), dim=-1)
+        # Apply Gaussian smoothing if enabled
+        if self.use_smoothing:
+            reads_tensor = gaussian_smooth_1d(reads_tensor)
+            
+        extended_data = torch.cat((one_hot, reads_tensor), dim=-1)
 
         if not return_augs:
             return extended_data
@@ -220,7 +223,7 @@ class GenomicInterval:
         return extended_data, rand_shift_tensor, rand_aug_bool_tensor
 
 class TFIntervalDataset(Dataset):
-    def __init__(self, bed_file, fasta_file, cell_lines_dir, filter_df_fn=identity, chr_bed_to_fasta_map=dict(), mode="train", num_tfs=2, context_length=None, return_seq_indices=False, shift_augs=None, rc_aug=False, return_augs=False):
+    def __init__(self, bed_file, fasta_file, cell_lines_dir, filter_df_fn=identity, chr_bed_to_fasta_map=dict(), mode="train", num_tfs=2, context_length=None, return_seq_indices=False, shift_augs=None, rc_aug=False, return_augs=False, use_smoothing=True):
         super().__init__()
         bed_path = Path(bed_file)
         assert bed_path.exists(), "Path to .bed file must exist"
@@ -239,6 +242,7 @@ class TFIntervalDataset(Dataset):
             return_seq_indices=return_seq_indices,
             shift_augs=shift_augs,
             rc_aug=rc_aug,
+            use_smoothing=use_smoothing
         )
         self.label_folders = sorted([f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()], key=lambda x: x)
         self.mode = mode
@@ -265,7 +269,7 @@ class TFIntervalDataset(Dataset):
     def __len__(self):
         return len(self.df)
 
-def main(compression: str, max_file_size: int, data_dir: str, output_path: str, input_file: str, cell_line_dir: str):
+def main(compression: str, max_file_size: int, data_dir: str, output_path: str, input_file: str, cell_line_dir: str, use_smoothing: bool):
     base_filename = os.path.join(output_path, "dataset")
     file_index = 1
     filename = f"{base_filename}_{file_index}.jsonl"
@@ -280,6 +284,7 @@ def main(compression: str, max_file_size: int, data_dir: str, output_path: str, 
         shift_augs=(0, 0),
         context_length=4_096,
         mode="inference",
+        use_smoothing=use_smoothing
     )
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
     max_file_size_bytes = max_file_size * 1024 * 1024  # Convert MB to bytes
@@ -327,6 +332,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_path', type=str, default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/jsonl", help='Specify the output path (default: "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/jsonl")')
     parser.add_argument('--input_file', type=str, default="validation_combined.csv", help='Specify the input CSV file name (default: "validation_combined.csv")')
     parser.add_argument('--cell_line_dir', type=str, default="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines", help='Specify the cell line directory (default: "/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines")')
+    parser.add_argument('--use_smoothing', action='store_true', help='Enable Gaussian smoothing of the pileup data')
 
     args = parser.parse_args()
 
@@ -350,5 +356,6 @@ if __name__ == "__main__":
         data_dir=args.data_dir,
         output_path=args.output_path,
         input_file=args.input_file,
-        cell_line_dir=args.cell_line_dir
+        cell_line_dir=args.cell_line_dir,
+        use_smoothing=args.use_smoothing
     )

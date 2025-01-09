@@ -42,9 +42,9 @@ RUN apt-get clean \
 
 # Install Bioconductor and R packages
 RUN R -e "install.packages('BiocManager', repos='https://cloud.r-project.org')"
-# Set Bioconductor version to 3.16
-RUN R -e "BiocManager::install(version = '3.19')"
-# Install specific packages for Bioconductor 3.16
+# Set Bioconductor version to 3.19
+RUN R -e "BiocManager::install(version = '3.19', ask = FALSE)"
+# Install specific packages for Bioconductor 3.19
 RUN R -e "BiocManager::install(c('ATACseqQC', 'ChIPQC', 'GenomicAlignments', 'Rsamtools'), version = '3.19')"
 RUN R -e "BiocManager::install('BSgenome.Hsapiens.UCSC.hg38', version = '3.19')"
 RUN R -e "BiocManager::install('TxDb.Hsapiens.UCSC.hg38.knownGene', version = '3.19')"

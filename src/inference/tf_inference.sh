@@ -52,7 +52,18 @@ process_model_cell_line() {
     local rewrite="$7"
     local MODEL_JSON_PATH="$8"
     
-    echo "Processing: $CELL_LINE - $MODEL"
+    # Create a unique log file for this combination
+    local log_dir="${path_to_project}/logs/inference"
+    local log_file="${log_dir}/${CELL_LINE}_${MODEL}.log"
+    mkdir -p "$log_dir"
+
+    rm -f "$log_file"
+    
+    # Redirect all output to the log file
+    exec 1> >(tee -a "$log_file")
+    exec 2> >(tee -a "$log_file" >&2)
+    
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting processing: $CELL_LINE - $MODEL"
     
     # Error handling
     set -e
@@ -131,6 +142,7 @@ process_model_cell_line() {
         prepare_data_cmd="python ${path_to_project}/src/inference/prepare_data.py \
             --input_file ${input_file}.csv \
             --output_path ${path_to_project}/data/jsonl/${input_file}"
+            # --use_smoothing"
         
         if [[ "$CELL_LINE" =~ ^SRR ]]; then
             prepare_data_cmd+=" --cell_line_dir /data1/datasets_1/human_prostate_PDX/processed/ATAC"
@@ -144,8 +156,8 @@ process_model_cell_line() {
         chgrp users "${path_to_project}/data/jsonl/${input_file}"
     fi
     
-    echo "Running inference for ${input_file}..."
-    echo "Using model path: ${MODEL_PATH}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running inference for ${input_file}..."
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using model path: ${MODEL_PATH}"
     
     # Run inference and capture job name
     job_name=$(python "${path_to_project}/src/inference/aws_inference.py" \
@@ -155,7 +167,7 @@ process_model_cell_line() {
         --project_path "${path_to_project}" \
         --local_dir "${path_to_project}/data/jsonl/${input_file}")
         
-    echo "Completed: $CELL_LINE - $MODEL"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Completed: $CELL_LINE - $MODEL"
 }
 
 # Main function to orchestrate the entire process
@@ -165,9 +177,9 @@ main() {
     MODEL_JSON_PATH="${path_to_project}/src/inference/models.json"
     
     # Cell lines and models
-    CELL_LINES=("SRR12455433" "SRR12455434" "SRR12455435" "SRR12455432" "SRR12455437")
+    CELL_LINES=("22Rv1") # "SRR12455434" "SRR12455435" "SRR12455432" "SRR12455437")
                 # "SRR12455436" "SRR12455439" "SRR12455440" "SRR12455441" "SRR12455442" "SRR12455445")
-    MODELS_TO_USE=("NEUROD1-chr3")
+    MODELS_TO_USE=("AR-log10")
     
     # Processing flags
     no_ground_truth=TRUE
@@ -195,9 +207,12 @@ main() {
         done
     done > "$temp_file"
     
-    # Run processing with parallel
-    echo "Starting parallel processing..."
-    parallel --progress --jobs 4 --colsep ' ' \
+    # Clear old logs before starting
+    log_dir="${path_to_project}/logs/inference"
+    mkdir -p "$log_dir"
+    
+    # Add logging to parallel execution
+    parallel --progress --jobs 4 --colsep ' ' --joblog "${log_dir}/parallel.log" \
         process_model_cell_line {1} {2} {3} {4} {5} {6} {7} {8} < "$temp_file"
     
     # Cleanup

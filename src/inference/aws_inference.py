@@ -6,40 +6,57 @@ import pandas as pd
 from sagemaker import Session
 from sagemaker.pytorch import PyTorchModel
 import time
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 import sys
+import logging
+from tqdm import tqdm
+import polars as pl
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 def setup_aws_clients() -> Tuple[Session, boto3.client]:
     """Initialize AWS and SageMaker sessions"""
+    logger.info("Initializing AWS and SageMaker sessions")
     session = Session()
     s3_client = boto3.client('s3')
     return session, s3_client
 
 def clean_s3_path(s3_client: Any, bucket: str, prefix: str) -> None:
     """Clean existing files from S3 path"""
+    logger.info(f"Cleaning S3 path: s3://{bucket}/{prefix}")
     response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
     if 'Contents' in response:
         for item in response['Contents']:
             s3_client.delete_object(Bucket=bucket, Key=item['Key'])
-        print(f"Cleaned up {bucket}/{prefix}")
+        logger.info(f"Cleaned up {bucket}/{prefix}")
 
 def ensure_clean_directory(directory: str) -> None:
     """Ensure directory exists and is empty"""
+    logger.info(f"Ensuring directory is clean: {directory}")
     dir_path = Path(directory)
     if dir_path.exists():
         for file_path in dir_path.glob('*'):
             try:
                 file_path.unlink()
             except Exception as e:
-                print(f"Warning: Could not delete {file_path}: {e}")
+                logger.warning(f"Could not delete {file_path}: {e}")
     else:
         dir_path.mkdir(parents=True)
+        logger.info(f"Created directory: {directory}")
 
 def create_job_name(cell_line: str, sample: str) -> str:
     """Create unique job name with timestamp"""
     timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
-    return f"{cell_line}-{sample}-{timestamp}"
+    job_name = f"{cell_line}-{sample}-{timestamp}"
+    logger.info(f"Created job name: {job_name}")
+    return job_name
 
 def download_s3_files(
     s3_client: Any,
@@ -49,11 +66,12 @@ def download_s3_files(
     max_retries: int = 3
 ) -> bool:
     """Download files from S3 with retry logic"""
+    logger.info(f"Downloading files from s3://{bucket}/{prefix} to {local_dir}")
     for attempt in range(max_retries):
         try:
             response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
             if 'Contents' not in response:
-                print(f"No files found in s3://{bucket}/{prefix}")
+                logger.warning(f"No files found in s3://{bucket}/{prefix}")
                 return False
 
             for obj in response['Contents']:
@@ -63,42 +81,49 @@ def download_s3_files(
                     
                 local_path = Path(local_dir) / Path(key).name
                 s3_client.download_file(bucket, key, str(local_path))
-                print(f'Downloaded {key} to {local_path}')
+                logger.info(f'Downloaded {key} to {local_path}')
             return True
             
         except Exception as e:
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                print(f"Attempt {attempt + 1} failed. Retrying in {wait_time}s...")
+                logger.warning(f"Attempt {attempt + 1} failed. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                print(f"Failed to download after {max_retries} attempts: {e}")
+                logger.error(f"Failed to download after {max_retries} attempts: {e}")
                 return False
 
-def process_jsonl_files(directory: str) -> Optional[pd.DataFrame]:
-    """Combine JSONL files into a DataFrame"""
+def process_jsonl_files(directory: str) -> Optional[pl.LazyFrame]:
+    """Combine JSONL files into a LazyFrame using streaming"""
+    logger.info(f"Processing JSONL files in {directory}")
     try:
         json_files = list(Path(directory).glob('*.jsonl.gz.out'))
         if not json_files:
-            print(f"No JSONL files found in {directory}")
+            logger.warning(f"No JSONL files found in {directory}")
             return None
 
-        dfs = []
+        # Read and collect valid LazyFrames
+        lazy_frames: List[pl.LazyFrame] = []
         for file in json_files:
             try:
-                df = pd.read_json(file)
-                dfs.append(df)
+                lf = pl.read_json(file).lazy()
+                lazy_frames.append(lf)
+                logger.info(f"Successfully processed {file}")
             except Exception as e:
-                print(f"Error processing {file}: {e}")
+                logger.error(f"Error processing {file}: {e}")
                 continue
 
-        if not dfs:
+        if not lazy_frames:
+            logger.warning("No valid LazyFrames created from JSONL files")
             return None
 
-        return pd.concat(dfs, ignore_index=True)
+        # Combine all lazy frames
+        result_lf = pl.concat(lazy_frames, how="vertical")
+        logger.info(f"Created LazyFrame from {len(lazy_frames)} files")
+        return result_lf
 
     except Exception as e:
-        print(f"Error processing JSONL files: {e}")
+        logger.error(f"Error processing JSONL files: {e}")
         return None
 
 def create_pytorch_model(
@@ -108,6 +133,7 @@ def create_pytorch_model(
     sagemaker_session: Session
 ) -> PyTorchModel:
     """Create and configure PyTorch model"""
+    logger.info(f"Creating PyTorch model with path: {model_path}")
     return PyTorchModel(
         model_data=model_path,
         role=args.iam_role,
@@ -132,6 +158,7 @@ def run_transform_job(
     args: Any
 ) -> None:
     """Run transformation job"""
+    logger.info(f"Starting transform job: {job_name}")
     transformer.transform(
         data=input_data,
         data_type="S3Prefix",
@@ -139,29 +166,45 @@ def run_transform_job(
         split_type=args.split_type,
         job_name=job_name
     )
-
 def save_and_process_results(
     job_name: str,
     args: Any,
     s3_client: Any
-) -> Optional[pd.DataFrame]:
+) -> Optional[pl.LazyFrame]:
     """Download and process results after job completion"""
+    logger.info(f"Processing results for job: {job_name}")
+    logger.info(f"All arguments: {args}")
+
     output_dir = f"{args.project_path}/data/jsonl_output/{args.model}-{args.sample}"
     ensure_clean_directory(output_dir)
     
     s3_prefix = f"inference/output/{job_name}/"
-    if download_s3_files(s3_client, args.s3_bucket, s3_prefix, output_dir):
-        df = process_jsonl_files(output_dir)
-        if df is not None:
-            output_file = f"{args.project_path}/data/processed_results/{args.model}_{args.sample}_processed.csv"
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            df.to_csv(output_file, index=False, header=True, sep='\t')
-            print(f"Results saved to {output_file}")
-        return df
-    return None
+    download_s3_files(s3_client, args.s3_bucket, s3_prefix, output_dir)
+    
+    lazy_frame = process_jsonl_files(output_dir)
+    if lazy_frame is None:
+        return None
+        
+    output_file = f"{args.project_path}/data/processed_results/{args.model}_{args.sample}_processed.parquet"
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    try:
+        # Materialize and save to parquet
+        df = lazy_frame.collect()
+        df.write_parquet(
+            output_file,
+            compression="snappy",
+            row_group_size=100_000
+        )
+        logger.info(f"Results saved to {output_file}")
+        return lazy_frame
+    except Exception as e:
+        logger.error(f"Error saving results: {e}")
+        return None
 
-def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
+def run_inference_pipeline(args: Any) -> Optional[pl.LazyFrame]:
     """Run complete inference pipeline including download and processing"""
+    logger.info("Starting inference pipeline")
     try:
         # Initialize AWS clients
         sagemaker_session, s3_client = setup_aws_clients()
@@ -174,6 +217,7 @@ def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
             clean_s3_path(s3_client, args.s3_bucket, prefix)
         
         # Upload input data
+        logger.info("Uploading input data to S3")
         inputs = sagemaker_session.upload_data(
             path=args.local_dir,
             bucket=args.s3_bucket,
@@ -181,10 +225,12 @@ def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
         )
         
         # Load model path from JSON
+        logger.info(f"Loading model paths from {args.model_paths_file}")
         with open(args.model_paths_file) as f:
             model_paths = json.load(f)
             
         if args.model not in model_paths:
+            logger.error(f"Model {args.model} not found in paths file")
             raise ValueError(f"Model {args.model} not found in paths file")
             
         model_path = model_paths[args.model]
@@ -193,6 +239,7 @@ def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
         pytorch_model = create_pytorch_model(job_name, model_path, args, sagemaker_session)
         
         # Configure transformer
+        logger.info("Configuring transformer")
         transformer = pytorch_model.transformer(
             instance_count=args.instance_count,
             instance_type=args.instance_type,
@@ -204,16 +251,13 @@ def run_inference_pipeline(args: Any) -> Optional[pd.DataFrame]:
         
         # Run transform job
         run_transform_job(transformer, inputs, job_name, args)
-        print(f"Started job: {job_name}")
-        
-        # Wait for job completion (you might want to implement a more sophisticated waiting mechanism)
-        time.sleep(args.wait_time)
+        logger.info(f"Started job: {job_name}")
         
         # Process and save results
         return save_and_process_results(job_name, args, s3_client)
         
     except Exception as e:
-        print(f"Error in inference pipeline: {str(e)}")
+        logger.error(f"Error in inference pipeline: {str(e)}")
         return None
 
 def get_parser() -> argparse.ArgumentParser:
@@ -368,14 +412,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     try:
+        logger.info("Starting main execution")
         df = run_inference_pipeline(args)
         if df is not None:
-            print("Pipeline completed successfully")
+            logger.info("Pipeline completed successfully")
             sys.exit(0)
         else:
-            print("Pipeline failed")
+            logger.error("Pipeline failed")
             sys.exit(1)
             
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error in main execution: {str(e)}")
         sys.exit(1)
+    # job_name = create_job_name(args.model, args.sample)
+    # sagemaker_session, s3_client = setup_aws_clients()
+    # save_and_process_results("NEUROD1-chr3-SRR12455432-2024-12-23-07-28-47", args, s3_client)
