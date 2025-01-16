@@ -3,6 +3,7 @@ import os
 import time
 from pathlib import Path
 from random import random, randrange
+from enum import Enum, auto
 
 import numpy as np
 import polars as pl
@@ -12,6 +13,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from pyfaidx import Fasta
 from torch.utils.data import DataLoader, Dataset
+from scipy.signal import savgol_coeffs
+
 
 # helper functions
 
@@ -125,9 +128,13 @@ def gaussian_smooth_1d(values: torch.Tensor, kernel_size: int = 5, sigma: float 
     # Ensure kernel size is odd
     kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
     
-    # Create Gaussian kernel
-    kernel = torch.exp(-torch.arange(-(kernel_size // 2), kernel_size // 2 + 1) ** 2 / (2 * sigma ** 2))
+    # Create Gaussian kernel with explicit dtype
+    kernel = torch.exp(-torch.arange(-(kernel_size // 2), kernel_size // 2 + 1, dtype=torch.float32) ** 2 / (2 * sigma ** 2))
     kernel = kernel / kernel.sum()
+    
+    # Ensure both kernel and values are float32
+    kernel = kernel.float()
+    values = values.float()
     
     # Reshape kernel for 1D convolution
     kernel = kernel.view(1, 1, -1)
@@ -137,6 +144,42 @@ def gaussian_smooth_1d(values: torch.Tensor, kernel_size: int = 5, sigma: float 
     
     # Apply padding to maintain sequence length
     padding = (kernel_size - 1) // 2
+    
+    # Perform convolution
+    smoothed = F.conv1d(values, kernel, padding=padding)
+    
+    return smoothed.view(-1, 1)
+
+
+def savgol_smooth_1d(values: torch.Tensor, window_length: int = 5, polyorder: int = 2) -> torch.Tensor:
+    """
+    Apply 1D Savitzky-Golay smoothing to a tensor of values.
+    
+    Args:
+        values: Input tensor of shape (sequence_length, 1)
+        window_length: Length of the filter window (should be odd)
+        polyorder: Order of the polynomial used to fit the samples (must be less than window_length)
+    
+    Returns:
+        Smoothed tensor of same shape as input
+    """
+    # Ensure window length is odd
+    window_length = window_length if window_length % 2 == 1 else window_length + 1
+    
+    # Get Savitzky-Golay coefficients and convert to float32
+    coeffs = torch.tensor(savgol_coeffs(window_length, polyorder), dtype=torch.float32, device=values.device)
+    
+    # Ensure values are float32
+    values = values.float()
+    
+    # Reshape kernel for 1D convolution
+    kernel = coeffs.view(1, 1, -1)
+    
+    # Reshape input for convolution
+    values = values.view(1, 1, -1)
+    
+    # Apply padding to maintain sequence length
+    padding = (window_length - 1) // 2
     
     # Perform convolution
     smoothed = F.conv1d(values, kernel, padding=padding)
@@ -195,6 +238,12 @@ def mask_sequence(input_tensor, mask_prob=0.15, mask_value=-1):
     return masked_tensor, labels
 
 
+class FilterType(Enum):
+    NONE = auto()
+    GAUSSIAN = auto()
+    SAVGOL = auto()
+
+
 class GenomicInterval:
     def __init__(
         self,
@@ -204,6 +253,8 @@ class GenomicInterval:
         return_seq_indices=False,
         shift_augs=None,
         rc_aug=False,
+        filter_type=FilterType.SAVGOL,
+        filter_params=None,      
     ):
         fasta_file = Path(fasta_file)
         assert fasta_file.exists(), "path to fasta file must exist"
@@ -212,6 +263,37 @@ class GenomicInterval:
         self.context_length = context_length
         self.shift_augs = shift_augs
         self.rc_aug = rc_aug
+        
+        # Validate filter_type is a FilterType enum
+        if isinstance(filter_type, str):
+            try:
+                filter_type = FilterType[filter_type.upper()]
+            except KeyError:
+                raise ValueError(f"Invalid filter type: {filter_type}. Must be one of {[f.name for f in FilterType]}")
+        elif not isinstance(filter_type, FilterType):
+            raise ValueError(f"filter_type must be a FilterType enum or string, got {type(filter_type)}")
+            
+        self.filter_type = filter_type
+        self.filter_params = filter_params or {}
+
+    def apply_smoothing(self, reads_tensor):
+        """Apply the selected smoothing filter to the reads tensor."""
+        if self.filter_type == FilterType.NONE:
+            return reads_tensor
+        elif self.filter_type == FilterType.GAUSSIAN:
+            return gaussian_smooth_1d(
+                reads_tensor,
+                kernel_size=self.filter_params.get('kernel_size', 5),
+                sigma=self.filter_params.get('sigma', 1.0)
+            )
+        elif self.filter_type == FilterType.SAVGOL:
+            return savgol_smooth_1d(
+                reads_tensor,
+                window_length=self.filter_params.get('window_length', 5),
+                polyorder=self.filter_params.get('polyorder', 2)
+            )
+        else:
+            raise ValueError(f"Unknown filter type: {self.filter_type}")
 
     @property
     def seqs(self):
@@ -278,7 +360,7 @@ class GenomicInterval:
             one_hot = one_hot_reverse_complement(one_hot)
 
         # Initialize a column of zeros for the reads
-        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.float)  # Changed to float
+        reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.float)
         assert (
             reads_tensor.shape[0] == one_hot.shape[0]
         ), f"reads tensor must be same length as one hot tensor, reads: {reads_tensor.shape[0]} != one hot: {one_hot.shape[0]}"
@@ -305,8 +387,8 @@ class GenomicInterval:
             scaled_count = (count - min_count) / count_range * range_size + min_range
             reads_tensor[relative_position, 0] = scaled_count
 
-        # Apply Gaussian smoothing to the reads tensor
-        smoothed_reads = gaussian_smooth_1d(reads_tensor)
+        # Apply selected smoothing filter
+        smoothed_reads = self.apply_smoothing(reads_tensor)
         
         # Concatenate one-hot encoded sequence with smoothed reads
         extended_data = torch.cat((one_hot, smoothed_reads), dim=-1)

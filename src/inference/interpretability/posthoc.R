@@ -3,12 +3,12 @@ library(tidyverse)
 min_seqlet <- 5
 receptor_name <- "AR"
 
-pwm <- read_csv('/Users/wjohns/Downloads/lev_pwm.csv')  %>%
+pwm <- read_csv('./lev_pwm.csv')  %>%
   filter(nchar(sequence) >= min_seqlet)
 
-pos_seqlets <- read_csv('/Users/wjohns/Downloads/positive_seqlets.csv') %>%
+pos_seqlets <- read_csv('./positive_seqlets.csv') %>%
   filter(nchar(sequence) >= min_seqlet)
-neg_seqlets <- read_csv('/Users/wjohns/Downloads/negative_seqlets.csv') %>%
+neg_seqlets <- read_csv('./negative_seqlets.csv') %>%
   filter(nchar(sequence) >= min_seqlet)
 
 seqlets <- rbind(pos_seqlets, neg_seqlets) %>%
@@ -20,7 +20,7 @@ write_csv(seqlets, file = "all_seqlets.csv")
     summarize(n = n()) %>%
     arrange(desc(n)))
 write_csv(most_common_seqlets,
-          '/Users/wjohns/abundant_candidate_motifs.csv')
+          './abundant_candidate_motifs.csv')
 MCS <- unique(slice_max(most_common_seqlets, n, n = 10)$sequence)
 
 
@@ -49,7 +49,7 @@ attr_volc <- ggplot(tb, aes(x = levenshtein_score, y = attribution, order=orderr
        size = "Seqlet Length", color = "Common?") +
   theme_bw()
 attr_volc
-ggsave(attr_volc, filename = "/Users/wjohns/Desktop/attr_volc.png",
+ggsave(attr_volc, filename = "./attr_volc.png",
        width = 1920, height = 1080, units = "px", scale = 2)
 
 
@@ -62,7 +62,7 @@ pos_volc <- ggplot(filter(tb, attribution > 0),
        size = "Seqlet Length", color = "Common?") +
   theme_bw()
 pos_volc
-ggsave(pos_volc, filename = "/Users/wjohns/Desktop/pos_volc.png",
+ggsave(pos_volc, filename = ".//pos_volc.png",
        width = 1920, height = 1080, units = "px", scale = 2)
 
 
@@ -96,7 +96,7 @@ com_motifs <- ggplot(slice_max(most_common_seqlets, order_by = n, n = 10),
        x = "Sequence",
        y = "Count") +
   theme_bw()
-ggsave(com_motifs, filename = "/Users/wjohns/Desktop/common_motifs.png",
+ggsave(com_motifs, filename = "./common_motifs.png",
        width = 1920, height = 1080, units = "px", scale = 2)
 
 top_attributions <- ggplot(slice_max(best_attributions, attribution, n = 25),
@@ -108,7 +108,7 @@ top_attributions <- ggplot(slice_max(best_attributions, attribution, n = 25),
   labs(title = "Highest-Attribution Seqlets",
        x = "Sequence",
        y = "Attribution")
-ggsave(top_attributions, filename = "/Users/wjohns/Desktop/top_attrs.png",
+ggsave(top_attributions, filename = "./top_attrs.png",
        width = 1920, height = 1080, units = "px", scale = 2)
 
 glimpse(slice_min(tb, attribution, n=1))

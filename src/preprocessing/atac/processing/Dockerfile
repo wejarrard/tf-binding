@@ -29,15 +29,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     samtools \
-    python3 \
-    python3-pip \
+    software-properties-common \
     libgsl-dev \
     bc \
+    gcc \
+    g++ \
+    && apt-get update \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Clean up redundant lists to keep the image small
-RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Bioconductor and R packages
@@ -45,10 +43,7 @@ RUN R -e "install.packages('BiocManager', repos='https://cloud.r-project.org')"
 # Set Bioconductor version to 3.19
 RUN R -e "BiocManager::install(version = '3.19', ask = FALSE)"
 # Install specific packages for Bioconductor 3.19
-RUN R -e "BiocManager::install(c('ATACseqQC', 'ChIPQC', 'GenomicAlignments', 'Rsamtools'), version = '3.19')"
-RUN R -e "BiocManager::install('BSgenome.Hsapiens.UCSC.hg38', version = '3.19')"
-RUN R -e "BiocManager::install('TxDb.Hsapiens.UCSC.hg38.knownGene', version = '3.19')"
-RUN R -e "BiocManager::install('BiocParallel', version = '3.19')"
+RUN R -e "BiocManager::install(c('ATACseqQC', 'ChIPQC', 'GenomicAlignments', 'Rsamtools', 'BSgenome.Hsapiens.UCSC.hg38', 'TxDb.Hsapiens.UCSC.hg38.knownGene', 'BiocParallel'), version = '3.19')"
 
 # Install optparse from CRAN
 RUN R -e "install.packages('optparse', repos='https://cloud.r-project.org')"
@@ -64,15 +59,34 @@ RUN curl -L https://github.com/samtools/htslib/releases/download/1.17/htslib-1.1
 # Clean up
 RUN rm -rf /var/lib/apt/lists/* htslib-1.17 htslib.tar.bz2
 
-RUN pip install MACS2 deeptools
+# install python 31111 from source
+RUN wget https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tgz && \
+    tar -xvf Python-3.11.11.tgz && \
+    cd Python-3.11.11 && \
+    ./configure && \
+    make && \
+    make install
+
+# clean up
+RUN rm -rf Python-3.11.11.tgz Python-3.11.11
+
+# Install Python packages in a virtual environment
+# RUN alias python=python3.11
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install numpy cython  # Install these first
+RUN pip install macs2 deeptools
+
+# Update environment paths to point to virtualenv binaries
+ENV MACS2="/opt/venv/bin/macs2"
+ENV BAMCOVERAGE="/opt/venv/bin/bamCoverage"
 
 # Set up environment paths for easy access to installed tools
 ENV SAMTOOLS="/usr/bin/samtools"
-ENV MACS2="/usr/local/bin/macs2"
 ENV BEDTOOLS="/usr/bin/bedtools"
 ENV BGZIP="/usr/bin/bgzip"
 ENV TABIX="/usr/bin/tabix"
-ENV BAMCOVERAGE="/usr/local/bin/bamCoverage"
 
 # Set the working directory
 WORKDIR /home/project
