@@ -173,3 +173,4 @@ validation_*.csv*
 sratoolkit*
 *logs*
 qsub_scripts*
+*output/*

@@ -1,6 +1,7 @@
 {
     "AR": "s3://tf-binding-sites/finetuning/results/output/AR-min-max--1-to-1-2024-10-31-17-32-12-640/output/model.tar.gz",
     "AR-log10": "s3://tf-binding-sites/finetuning/results/output/AR-Full-Data-Model-2024-10-17-04-20-48-548/output/model.tar.gz",
+    "AR-log10-new": "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-none-none-2025-01-23-20-24-30-568/output/model.tar.gz",
     "AR-min-max-0-to-1": "s3://tf-binding-sites/finetuning/results/output/AR-min-max-0-to-1-2024-10-31-17-29-24-059/output/model.tar.gz",
     "AR-normal-dist": "s3://tf-binding-sites/finetuning/results/output/AR-normal-dist-2024-10-31-17-02-45-299/output/model.tar.gz",
     "FOXA1": "s3://tf-binding-sites/finetuning/results/output/FOXA1-min-max--1-to-1-2024-10-31-17-58-51-787/output/model.tar.gz",

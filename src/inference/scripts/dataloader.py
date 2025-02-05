@@ -48,7 +48,6 @@ class JSONLinesDataset(Dataset):
         item["input"] = self.recreate_tensor(item["input"], [4096, 5])
         item["target"] = self.recreate_tensor(item["target"], [self.num_tfs])
         item["weight"] = self.recreate_tensor(item["weight"], [self.num_tfs])
-        item["motif_score"] = [float('-inf') if score is None else score for score in item["motif_score"]]
         return item
 
     def __len__(self):

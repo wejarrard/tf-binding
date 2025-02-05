@@ -1,33 +1,40 @@
 library(tidyverse)
 
-min_seqlet <- 5
-receptor_name <- "AR"
+args <- commandArgs(trailingOnly = TRUE)
 
-pwm <- read_csv('./lev_pwm.csv')  %>%
+if (length(args) != 3) {
+  stop("Usage: Rscript posthoc.R <min_seqlet> <receptor_name> <output_dir>")
+}
+
+min_seqlet <- as.numeric(args[1])
+receptor_name <- args[2]
+dir <- args[3]
+
+pwm <- read_csv(paste0(dir, '/lev_pwm.csv'))  %>%
   filter(nchar(sequence) >= min_seqlet)
 
-pos_seqlets <- read_csv('./positive_seqlets.csv') %>%
+pos_seqlets <- read_csv(paste0(dir, '/positive_seqlets.csv')) %>%
   filter(nchar(sequence) >= min_seqlet)
-neg_seqlets <- read_csv('./negative_seqlets.csv') %>%
+neg_seqlets <- read_csv(paste0(dir, '/negative_seqlets.csv')) %>%
   filter(nchar(sequence) >= min_seqlet)
 
 seqlets <- rbind(pos_seqlets, neg_seqlets) %>%
   arrange(desc(abs(attribution)))
-write_csv(seqlets, file = "all_seqlets.csv")
+write_csv(seqlets, file = paste0(dir, '/all_seqlets.csv'))
 
 (most_common_seqlets <- pos_seqlets %>%
     group_by(sequence) %>%
     summarize(n = n()) %>%
     arrange(desc(n)))
 write_csv(most_common_seqlets,
-          './abundant_candidate_motifs.csv')
+          paste0(dir, '/abundant_candidate_motifs.csv'))
 MCS <- unique(slice_max(most_common_seqlets, n, n = 10)$sequence)
 
 
 tb <- left_join(seqlets, pwm, by = c('example_idx', 'start', 'end'),
                  suffix = c("", "")) %>%
   mutate(common = (sequence %in% MCS))
-write_csv(tb, file = "seqlets_with_PWM.csv")
+write_csv(tb, file = paste0(dir, '/seqlets_with_PWM.csv'))
 
 tb <- tb %>%
   arrange(common) %>%
@@ -49,7 +56,7 @@ attr_volc <- ggplot(tb, aes(x = levenshtein_score, y = attribution, order=orderr
        size = "Seqlet Length", color = "Common?") +
   theme_bw()
 attr_volc
-ggsave(attr_volc, filename = "./attr_volc.png",
+ggsave(attr_volc, filename = paste0(dir, '/attr_volc.png'),
        width = 1920, height = 1080, units = "px", scale = 2)
 
 
@@ -62,7 +69,7 @@ pos_volc <- ggplot(filter(tb, attribution > 0),
        size = "Seqlet Length", color = "Common?") +
   theme_bw()
 pos_volc
-ggsave(pos_volc, filename = ".//pos_volc.png",
+ggsave(pos_volc, filename = paste0(dir, '/pos_volc.png'),
        width = 1920, height = 1080, units = "px", scale = 2)
 
 
@@ -96,7 +103,7 @@ com_motifs <- ggplot(slice_max(most_common_seqlets, order_by = n, n = 10),
        x = "Sequence",
        y = "Count") +
   theme_bw()
-ggsave(com_motifs, filename = "./common_motifs.png",
+ggsave(com_motifs, filename = paste0(dir, '/common_motifs.png'),
        width = 1920, height = 1080, units = "px", scale = 2)
 
 top_attributions <- ggplot(slice_max(best_attributions, attribution, n = 25),
@@ -108,7 +115,7 @@ top_attributions <- ggplot(slice_max(best_attributions, attribution, n = 25),
   labs(title = "Highest-Attribution Seqlets",
        x = "Sequence",
        y = "Attribution")
-ggsave(top_attributions, filename = "./top_attrs.png",
+ggsave(top_attributions, filename = paste0(dir, '/top_attrs.png'),
        width = 1920, height = 1080, units = "px", scale = 2)
 
 glimpse(slice_min(tb, attribution, n=1))

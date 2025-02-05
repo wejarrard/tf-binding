@@ -2,9 +2,29 @@
 
 # Usage: ./combined_script.sh TF
 
-# Define transcription factors
-# Path to the JSON file
+# Validate input
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 TF"
+    echo "Please provide one transcription factor."
+    exit 1
+fi
+
+# Set transcription factor from command line argument
+tf="$1"
+
+
+# Path to the JSON file that maps cell line names
 json_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/utils/cell_line_mapping.json"
+
+# Path to the input file that maps cell lines to experiment IDs
+input_file="/data1/datasets_1/human_cistrome/chip-atlas/2024_04_10_ChIP-atlas_experimentList_parsed.tab"
+
+# path to bed file aggregate
+bed_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/2023/allPeaks_light.hg38.05.bed"
+
+# path to output directory for the TF
+output_dir="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors/${tf}"
+
 
 # Function to load the JSON file and create an associative array
 declare -A cell_lines
@@ -18,21 +38,6 @@ load_cell_lines() {
 
 # Call the function to load cell lines into the associative array
 load_cell_lines
-
-# Validate input
-if [ $# -lt 1 ]; then
-    echo "Usage: $0 TF"
-    echo "Please provide one transcription factor."
-    exit 1
-fi
-
-# Set transcription factor from command line argument
-tf="$1"
-
-output_dir="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors/${tf}"
-
-# Path to the input file
-input_file="/data1/datasets_1/human_cistrome/chip-atlas/2024_04_10_ChIP-atlas_experimentList_parsed.tab"
 
 # Directory for output data
 mkdir -p "$output_dir"
@@ -84,7 +89,6 @@ python aggregate_experiments.py ${output_dir}  # Assume outputs to ./data/temp/a
 
 # Start processing the BED file
 input_bed_file="${output_dir}/aggregate.tsv"
-bed_file="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/2023/allPeaks_light.hg38.05.bed"
 
 mkdir -p ${output_dir}/split ${output_dir}/merged
 

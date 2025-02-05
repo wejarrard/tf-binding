@@ -190,11 +190,12 @@ def get_predictions(model, device: torch.device, val_loader):
     
     result = []
 
+    # DeepLift will automatically use the same device as the model
     dl = DeepLift(model)
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights, chr_name, start, end, cell_line, motifs, motif_score = (
+            inputs, targets, weights, chr_name, start, end, cell_line = (
                     batch["input"],
                     batch["target"],
                     batch["weight"],
@@ -202,8 +203,6 @@ def get_predictions(model, device: torch.device, val_loader):
                     batch["start"],
                     batch["end"],
                     batch["cell_line"],
-                    batch['motifs'],
-                    batch['motif_score']
                 )
 
             inputs, targets, weights = (
@@ -228,18 +227,16 @@ def get_predictions(model, device: torch.device, val_loader):
             )
 
 
+            # Move attributions calculation to GPU and only move to CPU at the end
             attributions = dl.attribute(inputs, baselines=baselines)
-
+            
             # The activations are now stored in activation['linear_512']
-            # Ensure that the activations correspond to the current batch
             linear_512_outputs = activation['linear_512']
-            # If necessary, apply sigmoid or other transformations
-            # linear_512_outputs = torch.sigmoid(lin ear_512_outputs)
             
             # Calculate accuracy
             predicted = (outputs.data > 0.5).float()
 
-            # Add to result
+            # Add to result - move tensors to CPU only when adding to results
             for i in range(predicted.shape[0]):
                 result.append(
                     [
@@ -252,9 +249,7 @@ def get_predictions(model, device: torch.device, val_loader):
                         weights[i].cpu().item(),
                         outputs[i].cpu().item(),
                         linear_512_outputs[i].cpu().numpy(),
-                        motifs[i],
                         attributions[i].cpu().numpy(),
-                        # motif_score[i].item()
                     ]
                 )
             # if (batch_idx + 1) % 50 == 0:
@@ -275,9 +270,7 @@ def get_predictions(model, device: torch.device, val_loader):
             "weights",
             "probabilities",
             "linear_512_output", 
-            "motifs",
             "attributions",
-            # "motif_score"
         ],
     )
 
@@ -330,6 +323,7 @@ def input_fn(request_body, request_content_type):
     if request_content_type == 'application/jsonlines':
         logger.info("Reading JSONLines dataset")
         file_stream = io.BytesIO(request_body)
+        # Add pin_memory=True to dataset creation if available in your JSONLinesDataset
         dataset = JSONLinesDataset(file_stream=file_stream, num_tfs=1, compressed=True)
     else:
         raise ValueError(f"Unsupported content type or request body type: {request_content_type}, {type(request_body)}")

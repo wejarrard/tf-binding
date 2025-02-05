@@ -6,6 +6,7 @@ import os
 import boto3
 from sagemaker import Session
 from sagemaker.pytorch import PyTorch
+from tf_finetuning.tf_dataloader import TransformType, FilterType
 
 def main():
     parser = argparse.ArgumentParser(description='Run TF Binding Site Training Script')
@@ -21,8 +22,10 @@ def main():
     parser.add_argument('--role', default='arn:aws:iam::016114370410:role/tf-binding-sites')
     parser.add_argument('--s3_bucket', default='tf-binding-sites')
     parser.add_argument('--s3_prefix', default='pretraining/data')
-    parser.add_argument('--entry_point', default='tf_prediction.py')
+    parser.add_argument('--entry_point', default='old_prediction.py')
     parser.add_argument('--instance_type', default='ml.g5.8xlarge')
+    parser.add_argument('--transform_type', default='none')
+    parser.add_argument('--filter_type', default='none')
     args = parser.parse_args()
     
     # Generate peaks command
@@ -48,7 +51,7 @@ def main():
 
     # Rename files
     local_dir = os.path.join(args.path_to_project, 'data', 'data_splits')
-    validation_identifier = args.tf_name + '-' + (args.cell_line if args.cell_line else args.chr)
+    validation_identifier = args.tf_name + '-' + (args.cell_line if args.cell_line else args.chr) + '-' + args.transform_type + '-' + args.filter_type
     for file_type in ['training', 'validation']:
         old_name = os.path.join(local_dir, f'{file_type}_combined.csv')
         new_name = os.path.join(local_dir, f'{file_type}_combined_{validation_identifier}.csv')
@@ -59,10 +62,14 @@ def main():
     sagemaker_session = Session()
     inputs = sagemaker_session.upload_data(path=local_dir, bucket=args.s3_bucket, key_prefix=args.s3_prefix)
 
+
+    transform_type = TransformType.from_str(args.transform_type)
+    filter_type = FilterType.from_str(args.filter_type)
+
     # Configure SageMaker training
     print("Setting up SageMaker training job...")
     estimator = PyTorch(
-        base_job_name=f"{validation_identifier}-gaussian-smoothing",
+        base_job_name=f"{validation_identifier}",
         entry_point=args.entry_point,
         source_dir=os.path.join(args.path_to_project, 'src', 'training', 'tf_finetuning'),
         output_path=f"s3://{args.s3_bucket}/finetuning/results/output",
@@ -77,7 +84,9 @@ def main():
         hyperparameters={
             'learning-rate': args.learning_rate,
             'train-file': f'training_combined_{validation_identifier}.csv',
-            'valid-file': f'validation_combined_{validation_identifier}.csv'
+            'valid-file': f'validation_combined_{validation_identifier}.csv',
+            # 'transform-type': str(transform_type),
+            # 'filter-type': str(filter_type),
         }
     )
     

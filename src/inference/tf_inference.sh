@@ -1,226 +1,121 @@
 #!/bin/bash
 
-# Set strict error handling
 set -euo pipefail
 
-# Function to handle cleanup
-cleanup() {
-    echo "Cleaning up..."
-    # GNU Parallel will handle child process cleanup
-    exit 1
-}
+# Configuration
+PROJECT_PATH="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
+MODEL_JSON_PATH="${PROJECT_PATH}/src/inference/models.json"
 
-# Trap signals
-trap cleanup SIGINT SIGTERM
-
-# Function to check and setup conda environment
-setup_conda() {
-    if ! command -v conda &> /dev/null; then
-        echo "Error: conda not found. Please install conda first."
-        exit 1
-    fi
-
-    if conda env list | grep -q "processing"; then
-        echo "Activating processing environment..."
-        source activate processing
-    else
-        echo "Creating processing environment..."
-        conda env create -f "${path_to_project}/environment.yml"
-        conda activate processing
-    fi
-}
-
-# Function to get input bed file path
-get_input_bed_file() {
-    local identifier="$1"
+# Process a single combination of model and cell line
+process_combination() {
+    local cell_line="$1"
+    local model="$2"
     
-    if [[ "$identifier" =~ ^SRR ]]; then
-        echo "/data1/datasets_1/human_prostate_PDX/processed/ATAC/${identifier}/peaks/${identifier}.filtered.broadPeak"
-    else
-        echo "/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/${identifier}/peaks/${identifier}.filtered.broadPeak"
+    # Extract SRR value if present
+    local srr_value=""
+    if [[ "$cell_line" =~ : ]]; then
+        srr_value=$(echo "$cell_line" | cut -d':' -f2)
+        cell_line=$(echo "$cell_line" | cut -d':' -f1)
     fi
-}
-
-# Function to process a single model-cell line combination
-process_model_cell_line() {
-    local CELL_LINE="$1"
-    local MODEL="$2"
-    local path_to_project="$3"
-    local no_ground_truth="$4"
-    local balance="$5"
-    local positive_only="$6"
-    local rewrite="$7"
-    local MODEL_JSON_PATH="$8"
     
-    # Create a unique log file for this combination
-    local log_dir="${path_to_project}/logs/inference"
-    local log_file="${log_dir}/${CELL_LINE}_${MODEL}.log"
+    # Setup logging
+    local log_dir="${PROJECT_PATH}/logs/inference"
+    local log_file="${log_dir}/${cell_line}_${model}.log"
     mkdir -p "$log_dir"
 
-    rm -f "$log_file"
+    # remove log file if it exists
+    if [ -f "$log_file" ]; then
+        rm "$log_file"
+    fi
     
-    # Redirect all output to the log file
-    exec 1> >(tee -a "$log_file")
-    exec 2> >(tee -a "$log_file" >&2)
-    
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting processing: $CELL_LINE - $MODEL"
-    
-    # Error handling
-    set -e
+    # Log start of processing
+    {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting processing: ${cell_line} - ${model}"
+        echo "SRR_VALUE: ${srr_value}"
+        echo "Processing TF: ${model%%-*}"
+    } >> "$log_file"
     
     # Get input bed file path
-    input_bed_file=$(get_input_bed_file "$CELL_LINE")
-    if [ ! -f "${input_bed_file}" ]; then
-        echo "Error: Input bed file ${input_bed_file} does not exist"
+    local bed_path
+    if [[ "$cell_line" =~ ^LuCaP ]]; then
+        bed_path="/data1/datasets_1/human_prostate_PDX/processed/ATAC/${cell_line}/${srr_value}/peaks/${srr_value}.filtered.broadPeak"
+    else
+        bed_path="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/${cell_line}/peaks/${cell_line}.filtered.broadPeak"
+    fi
+    
+    # Validate input file
+    if [ ! -f "${bed_path}" ]; then
+        echo "Error: Input bed file ${bed_path} not found" | tee -a "$log_file"
         return 1
     fi
-
-    # Extract TF name
-    TF_NAME=$(echo "$MODEL" | cut -d'-' -f1)
-    echo "Processing TF: $TF_NAME"
     
-    # Set input file name based on conditions
-    if [ "$balance" = TRUE ]; then
-        input_file="${TF_NAME}-${CELL_LINE}-BALANCED"
-    else
-        if [ "$positive_only" = TRUE ]; then
-            input_file="${TF_NAME}-${CELL_LINE}-POSITIVE-ONLY"
-        else
-            input_file="${TF_NAME}_${CELL_LINE}"
-        fi
+    # Extract TF name and set input file name
+    local tf_name=$(echo "$model" | cut -d'-' -f1)
+    local input_file="${model}_${cell_line}"
+    
+    # Skip if output exists and rewrite is false
+    if [ "${REWRITE:-false}" = false ] && [ -d "${PROJECT_PATH}/data/jsonl/${input_file}" ]; then
+        echo "Output exists for ${input_file}, skipping preprocessing..." | tee -a "$log_file"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running inference for ${input_file}..." >> "$log_file"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using model path: " >> "$log_file"
     fi
     
-    # Check if processing can be skipped
-    if [ "$rewrite" = FALSE ] && [ -d "${path_to_project}/data/jsonl/${input_file}" ]; then
-        echo "Output exists for ${input_file}, skipping preprocessing..."
+    # Prepare directories
+    mkdir -p "${PROJECT_PATH}/data/data_splits" "${PROJECT_PATH}/data/jsonl/${input_file}"
+    
+    # Generate training peaks
+    python "${PROJECT_PATH}/src/utils/generate_training_peaks.py" \
+        --no_ground_truth \
+        --input_bed_file "${bed_path}" \
+        --output_dir "${PROJECT_PATH}/data/data_splits" \
+        --output_file "${input_file}.csv" 2>&1 | tee -a "$log_file"
+    
+    # Prepare data
+    local cell_line_dir
+    if [[ "$cell_line" =~ ^LuCaP ]]; then
+        cell_line_dir="/data1/datasets_1/human_prostate_PDX/processed/ATAC/${cell_line}"
     else
-        # Get model path from JSON
-        MODEL_PATH=$(jq -r --arg model "$MODEL" '.[$model]' "$MODEL_JSON_PATH")
-        if [ -z "${MODEL_PATH}" ] || [ "${MODEL_PATH}" = "null" ]; then
-            echo "Model path for $MODEL not found in $MODEL_JSON_PATH"
-            return 1
-        fi
-
-        # Create necessary directories
-        mkdir -p "${path_to_project}/data/data_splits"
-        mkdir -p "${path_to_project}/data/jsonl/${input_file}"
-        
-        echo "Processing data for ${input_file}..."
-        
-        # Generate training peaks based on conditions
-        if [ "$no_ground_truth" = TRUE ]; then
-            python "${path_to_project}/src/processing/generate_training_peaks.py" \
-                --no_ground_truth \
-                --input_bed_file "${input_bed_file}" \
-                --output_dir "${path_to_project}/data/data_splits" \
-                --output_file "${input_file}.csv"
-        else
-            cmd="python ${path_to_project}/src/processing/generate_training_peaks.py \
-                --tf ${TF_NAME} \
-                --validation_cell_lines ${CELL_LINE} \
-                --validation_file ${input_file}.csv"
-            
-            [ "$balance" = TRUE ] && cmd+=" --balance"
-            [ "$positive_only" = TRUE ] && cmd+=" --positive_only"
-            
-            eval "$cmd"
-        fi
-        
-        # Move and process files
-        mv -f "${path_to_project}/data/data_splits/${input_file}.csv" \
-            "${path_to_project}/data/data_splits/${input_file}_no_motifs.csv"
-        
-        # Add motifs
-        python "${path_to_project}/src/inference/motif_finding/motif_addition.py" \
-            --tsv_file "${path_to_project}/data/data_splits/${input_file}_no_motifs.csv" \
-            --jaspar_file "${path_to_project}/src/inference/motif_finding/motif.jaspar" \
-            --reference_genome "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/genome.fa" \
-            --output_file "${path_to_project}/data/data_splits/${input_file}.csv" \
-            --min_score -10
-        
-        # Prepare data command
-        prepare_data_cmd="python ${path_to_project}/src/inference/prepare_data.py \
-            --input_file ${input_file}.csv \
-            --output_path ${path_to_project}/data/jsonl/${input_file}"
-            # --use_smoothing"
-        
-        if [[ "$CELL_LINE" =~ ^SRR ]]; then
-            prepare_data_cmd+=" --cell_line_dir /data1/datasets_1/human_prostate_PDX/processed/ATAC"
-        else
-            prepare_data_cmd+=" --cell_line_dir /data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
-        fi
-        
-        eval "$prepare_data_cmd"
-        
-        # Set permissions
-        chgrp users "${path_to_project}/data/jsonl/${input_file}"
+        cell_line_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
     fi
     
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running inference for ${input_file}..."
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using model path: ${MODEL_PATH}"
+    python "${PROJECT_PATH}/src/inference/prepare_data.py" \
+        --input_file "${input_file}.csv" \
+        --output_path "${PROJECT_PATH}/data/jsonl/${input_file}" \
+        --cell_line_dir "${cell_line_dir}" 2>&1 | tee -a "$log_file"
     
-    # Run inference and capture job name
-    job_name=$(python "${path_to_project}/src/inference/aws_inference.py" \
-        --model "${MODEL}" \
-        --sample "${CELL_LINE}" \
+    # Run inference
+    python "${PROJECT_PATH}/src/inference/aws_inference.py" \
+        --model "${model}" \
+        --sample "${cell_line}" \
         --model_paths_file "${MODEL_JSON_PATH}" \
-        --project_path "${path_to_project}" \
-        --local_dir "${path_to_project}/data/jsonl/${input_file}")
-        
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Completed: $CELL_LINE - $MODEL"
+        --project_path "${PROJECT_PATH}" \
+        --local_dir "${PROJECT_PATH}/data/jsonl/${input_file}" 2>&1 | tee -a "$log_file"
 }
 
-# Main function to orchestrate the entire process
 main() {
-    # Configuration
-    path_to_project="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
-    MODEL_JSON_PATH="${path_to_project}/src/inference/models.json"
+    # Activate conda environment
+    if ! command -v conda &> /dev/null; then
+        echo "Error: conda not found"
+        exit 1
+    fi
     
-    # Cell lines and models
-    CELL_LINES=("22Rv1") # "SRR12455434" "SRR12455435" "SRR12455432" "SRR12455437")
-                # "SRR12455436" "SRR12455439" "SRR12455440" "SRR12455441" "SRR12455442" "SRR12455445")
-    MODELS_TO_USE=("AR-log10")
+    source activate processing 2>/dev/null || conda env create -f "${PROJECT_PATH}/environment.yml"
     
-    # Processing flags
-    no_ground_truth=TRUE
-    balance=FALSE
-    positive_only=FALSE
-    rewrite=FALSE
+    # Define cell lines and models
+    # local cell_lines=("LuCaP_81:SRR12455442") #"LuCaP_78:SRR12455441" "LuCaP_77CR:SRR12455440")
+    local cell_lines=("LuCaP_81:SRR12455442" "LuCaP_78:SRR12455441" "LuCaP_77CR:SRR12455440")
+    # local cell_lines=("22Rv1")
+    local models=("AR-log10-new")
     
-    # Setup conda environment
-    setup_conda
+    # Process combinations in parallel
+    export PROJECT_PATH MODEL_JSON_PATH
+    export -f process_combination
     
-    # Create download queue file
-    rm -f "${path_to_project}/data/download_queue.txt"
-    touch "${path_to_project}/data/download_queue.txt"
+    local jobs=4
+    parallel --jobs "${jobs}" --progress \
+        process_combination {1} {2} ::: "${cell_lines[@]}" ::: "${models[@]}"
     
-    # Export functions and variables for parallel
-    export -f process_model_cell_line
-    export -f get_input_bed_file
-    export path_to_project no_ground_truth balance positive_only rewrite MODEL_JSON_PATH
-    
-    # Create combinations file
-    temp_file=$(mktemp)
-    for cell_line in "${CELL_LINES[@]}"; do
-        for model in "${MODELS_TO_USE[@]}"; do
-            echo "$cell_line $model $path_to_project $no_ground_truth $balance $positive_only $rewrite $MODEL_JSON_PATH"
-        done
-    done > "$temp_file"
-    
-    # Clear old logs before starting
-    log_dir="${path_to_project}/logs/inference"
-    mkdir -p "$log_dir"
-    
-    # Add logging to parallel execution
-    parallel --progress --jobs 4 --colsep ' ' --joblog "${log_dir}/parallel.log" \
-        process_model_cell_line {1} {2} {3} {4} {5} {6} {7} {8} < "$temp_file"
-    
-    # Cleanup
-    rm -f "$temp_file"
-    rm -f "${path_to_project}/data/download_queue.txt"
-    
-    echo "All processing complete."
+    echo "Processing complete"
 }
 
-# Run main function
 main "$@"

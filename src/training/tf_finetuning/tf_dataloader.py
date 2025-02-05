@@ -15,6 +15,43 @@ from pyfaidx import Fasta
 from torch.utils.data import DataLoader, Dataset
 from scipy.signal import savgol_coeffs
 
+class FilterType(Enum):
+    NONE = auto()
+    GAUSSIAN = auto()
+    SAVGOL = auto()
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(f"Invalid FilterType: {value}")
+
+class TransformType(Enum):
+    NONE = auto()
+    LOG10 = auto()
+    MINMAX = auto()
+    LOG10_MINMAX = auto()
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(f"Invalid TransformType: {value}")
+    
+    
+
+class Mode(Enum):
+    TRAIN = auto()
+    VALIDATION = auto()
+    INFERENCE = auto()
 
 # helper functions
 
@@ -237,13 +274,6 @@ def mask_sequence(input_tensor, mask_prob=0.15, mask_value=-1):
 
     return masked_tensor, labels
 
-
-class FilterType(Enum):
-    NONE = auto()
-    GAUSSIAN = auto()
-    SAVGOL = auto()
-
-
 class GenomicInterval:
     def __init__(
         self,
@@ -255,6 +285,8 @@ class GenomicInterval:
         rc_aug=False,
         filter_type=FilterType.SAVGOL,
         filter_params=None,      
+        transform_type=TransformType.LOG10,
+        transform_params=None,
     ):
         fasta_file = Path(fasta_file)
         assert fasta_file.exists(), "path to fasta file must exist"
@@ -275,6 +307,8 @@ class GenomicInterval:
             
         self.filter_type = filter_type
         self.filter_params = filter_params or {}
+        self.transform_type = transform_type
+        self.transform_params = transform_params
 
     def apply_smoothing(self, reads_tensor):
         """Apply the selected smoothing filter to the reads tensor."""
@@ -298,6 +332,19 @@ class GenomicInterval:
     @property
     def seqs(self):
         return Fasta(self.fasta_path)
+
+    def apply_transform(self, count, max_count=None, min_count=None):
+        """Apply the selected transform to the count value."""
+        if self.transform_type == TransformType.NONE:
+            return count
+        elif self.transform_type == TransformType.LOG10:
+            return np.log10(count) if count > 0 else 0
+        elif self.transform_type == TransformType.MINMAX:
+            return (count - min_count) / (max_count - min_count)
+        elif self.transform_type == TransformType.LOG10_MINMAX:
+            log_val = np.log10(count) if count > 0 else 0
+            return (log_val - min_count) / (max_count - min_count)
+        return count
 
     def __call__(self, chr_name, start, end, pileup_dir, return_augs=False):
         interval_length = end - start
@@ -366,25 +413,16 @@ class GenomicInterval:
         ), f"reads tensor must be same length as one hot tensor, reads: {reads_tensor.shape[0]} != one hot: {one_hot.shape[0]}"
         
         df = process_pileups(pileup_dir, chr_name, start, end)
-        
-        # Calculate min and max counts
-        max_count = df["count"].max() if df.height > 0 else 1
-        min_count = df["count"].min() if df.height > 0 else 0
-        
-        # Use provided range
-        min_range = -1
-        max_range = 1
-        range_size = max_range - min_range
 
-        # Avoid division by zero by ensuring count_range is at least 1
-        count_range = max(max_count - min_count, 1)
+        max_count = df["count"].max()
+        min_count = df["count"].min()
 
         # Fill the reads tensor with scaled counts
         for row in df.iter_rows(named=True):
             position = row["position"]
             count = row["count"]
             relative_position = position - start - 1
-            scaled_count = (count - min_count) / count_range * range_size + min_range
+            scaled_count = self.apply_transform(count, max_count, min_count)
             reads_tensor[relative_position, 0] = scaled_count
 
         # Apply selected smoothing filter
@@ -410,12 +448,14 @@ class TFIntervalDataset(Dataset):
         cell_lines_dir,
         filter_df_fn=identity,
         chr_bed_to_fasta_map=dict(),
-        mode="train",
+        mode=Mode.TRAIN,
         context_length=None,
         return_seq_indices=False,
         shift_augs=None,
         rc_aug=False,
         return_augs=False,
+        transform_type=TransformType.LOG10,
+        filter_type=FilterType.SAVGOL,
     ):
         super().__init__()
 
@@ -437,6 +477,8 @@ class TFIntervalDataset(Dataset):
             return_seq_indices=return_seq_indices,
             shift_augs=shift_augs,
             rc_aug=rc_aug,
+            transform_type=transform_type,
+            filter_type=filter_type,
         )
         self.label_folders = sorted(
             [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
@@ -474,9 +516,10 @@ class TFIntervalDataset(Dataset):
 
         score, label_encoded = self.process_tfs(score, label)
 
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup"
-        # pileup_dir = self.cell_lines_dir / "mod_log10" / Path(cell_line)
-        if self.mode == "train":
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup_mod"
+        if not pileup_dir.exists():
+            pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup"
+        if self.mode == Mode.TRAIN or self.mode == Mode.VALIDATION:
             return (
                 self.processor(
                     chr_name, start, end, pileup_dir, return_augs=self.return_augs
@@ -484,7 +527,7 @@ class TFIntervalDataset(Dataset):
                 label_encoded,
                 score,
             )
-        elif self.mode == "inference":
+        elif self.mode == Mode.INFERENCE:
             return (
                 self.processor(
                     chr_name, start, end, pileup_dir, return_augs=self.return_augs
@@ -497,38 +540,41 @@ class TFIntervalDataset(Dataset):
                 cell_line,
             )
         else:
-            return (
-                self.processor(
-                    chr_name, start, end, pileup_dir, return_augs=self.return_augs
-                ),
-                label_encoded,
-            )
+            raise ValueError(f"Invalid mode: {self.mode}")
 
     def __len__(self):
         return len(self.df)
 
 if __name__ == "__main__":
-    data_dir = "/Users/wejarrard/projects/tf-binding/data"
+    # set seed
+    torch.manual_seed(30)
+    data_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, 'data_splits', "training_combined.csv"),
+        bed_file=os.path.join(data_dir, 'data_splits', 'AR_22Rv1.csv'),
         fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        cell_lines_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines",
         return_augs=False,
-        rc_aug=True,
-        shift_augs=(-50, 50),
+        rc_aug=False,
+        shift_augs=(0, 0),
         context_length=4_096,
-        mode="inference",
+        mode=Mode.TRAIN,
+        transform_type=TransformType.LOG10,
+        filter_type=FilterType.NONE,
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=4,
-        shuffle=True,
+        batch_size=1,
+        shuffle=False,
         num_workers=4,
         pin_memory=True,
         drop_last=True,
     )
 
     for i, data in enumerate(train_loader):
-        inputs, labels, scores, chr_names, starts, ends, cell_lines = data
+        inputs, labels, scores = data
         print(scores)
+        print(labels)
+        print(inputs)
+        print(inputs[0].mean(dim=0))
+        break

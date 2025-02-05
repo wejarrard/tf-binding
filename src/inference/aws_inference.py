@@ -54,6 +54,8 @@ def ensure_clean_directory(directory: str) -> None:
 def create_job_name(cell_line: str, sample: str) -> str:
     """Create unique job name with timestamp"""
     timestamp = time.strftime('%Y-%m-%d-%H-%M-%S')
+    cell_line = cell_line.replace('_', '-')
+    sample = sample.replace('_', '-')
     job_name = f"{cell_line}-{sample}-{timestamp}"
     logger.info(f"Created job name: {job_name}")
     return job_name
@@ -145,7 +147,7 @@ def create_pytorch_model(
         name=f"{args.model_name_prefix}-{job_name}",
         env={
             "TS_MAX_RESPONSE_SIZE": "500000000",
-            "TS_DEFAULT_STARTUP_TIMEOUT": "600",
+            "TS_DEFAULT_STARTUP_TIMEOUT": "1000",
             'TS_DEFAULT_RESPONSE_TIMEOUT': '10000',
             "SAGEMAKER_MODEL_SERVER_WORKERS": "2"
         }

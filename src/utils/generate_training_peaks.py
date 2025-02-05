@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import json
@@ -119,14 +120,15 @@ def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame, regio
         command = f"bedtools intersect -a {main_path} -b {intersect_path} -wa -wb > {result_path}"
         run_bedtools_command(command)
 
-        intersected_df = pd.read_csv(result_path, sep="\t", header=None, usecols=range(len(col_names)), names=col_names)
+
+        # Simply specify the exact columns we want: 0, 1, 2, and 6
+        intersected_df = pd.read_csv(result_path, sep="\t", header=None, usecols=[0, 1, 2, 6], names=['chr', 'start', 'end', 'count'])
         
     os.remove(main_path)
     os.remove(intersect_path)
     os.remove(result_path)
 
     intersected_df = drop_duplicates_and_sort(intersected_df)
-
     if region_type:
         intersected_df["region_type"] = region_type
     return intersected_df
@@ -165,24 +167,6 @@ def intersect_colocalization_bed_files(df: pd.DataFrame, intersect_df: pd.DataFr
 # ============================================================
 # Data Processing Functions
 # ============================================================
-def label_peaks(peaks_df: pd.DataFrame, balance_option: BalanceOption, data_filter_option: DataFilterOption) -> pd.DataFrame:
-    peaks_df["label"] = POSITIVE_LABEL
-    if data_filter_option == DataFilterOption.NO_FILTER:
-        # Apply filtering logic
-        max_count = peaks_df["count"].max()
-        if max_count <= 2:
-            return peaks_df
-        elif max_count > MAX_COUNT_THRESHOLD:
-            threshold = peaks_df["count"].quantile(HIGH_COUNT_QUANTILE)
-            peaks_df = peaks_df[peaks_df["count"] > threshold]
-        elif max_count > MID_COUNT_THRESHOLD:
-            threshold = peaks_df["count"].median()
-            peaks_df = peaks_df[peaks_df["count"] > threshold]
-        else:
-            threshold = peaks_df["count"].median()
-            peaks_df = peaks_df[peaks_df["count"] >= threshold]
-    return peaks_df
-
 def assign_negative_label(df: pd.DataFrame) -> pd.DataFrame:
     df["label"] = NEGATIVE_LABEL
     df["count"] = 0
@@ -193,123 +177,70 @@ def balance_labels(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("label").apply(lambda x: x.sample(min_count)).reset_index(drop=True)
 
 # ============================================================
-# Specialized Processing
+# Process ATAC Peaks and Label Them with Chip Data
 # ============================================================
-def get_negative_samples(df: pd.DataFrame, cell_line: str, aligned_chip_dir: str, negative_regions_files: list) -> pd.DataFrame:
-    neg_path = os.path.join(aligned_chip_dir, cell_line, "peaks", f"{cell_line}.filtered.broadPeak")
-    if not validate_file_exists(neg_path):
-        logging.warning(f"Negative samples file not found for {cell_line} at {neg_path}")
-        return pd.DataFrame()
-
-    neg_df = pd.read_csv(neg_path, sep="\t", header=None, names=["chr", "start", "end"], usecols=[0, 1, 2])
-    neg_df = filter_by_peak_length(neg_df)
-    neg_df = filter_by_chromosomes(neg_df)
-    neg_df = subtract_bed_files(neg_df, df[["chr", "start", "end"]])
-
-    if negative_regions_files:
-        neg_df_overlapping = pd.DataFrame()
-        for bed_file in negative_regions_files:
-            if not validate_file_exists(bed_file):
-                logging.warning(f"Negative regions file not found: {bed_file}")
-                continue
-            neg_regions_df = pd.read_csv(bed_file, sep="\t", header=None, names=["chr", "start", "end"])
-            neg_regions_df = filter_by_chromosomes(neg_regions_df)
-            current_overlap = intersect_bed_files(neg_df, neg_regions_df)
-            neg_df_overlapping = pd.concat([neg_df_overlapping, current_overlap], ignore_index=True)
-
-        neg_df_overlapping = neg_df_overlapping.drop_duplicates(subset=["chr", "start", "end"])
-        num_positives = df.shape[0]
-        num_negatives_current = neg_df_overlapping.shape[0]
-        if num_negatives_current < num_positives:
-            remaining_neg_df = neg_df[~neg_df.apply(tuple, axis=1).isin(neg_df_overlapping.apply(tuple, axis=1))]
-            additional_negatives = remaining_neg_df.sample(
-                n=min(num_positives - num_negatives_current, len(remaining_neg_df)),
-                replace=False
-            )
-            additional_negatives = assign_negative_label(additional_negatives)
-            additional_negatives["cell_line"] = cell_line
-            neg_df_final = pd.concat([neg_df_overlapping, additional_negatives], ignore_index=True)
-        else:
-            neg_df_final = neg_df_overlapping.sample(n=num_positives, replace=False)
-    else:
-        neg_df_final = neg_df
-
-    neg_df_final = assign_negative_label(neg_df_final)
-    neg_df_final["cell_line"] = cell_line
-    logging.info(f"Cell line: {cell_line}; Positive: {df.shape[0]}, Negative: {neg_df_final.shape[0]}")
-    return neg_df_final
-
-def process_colocalization(df: pd.DataFrame, cell_line_key: str, cell_line: str, args) -> list:
-    colocalization_path = os.path.join(
-        args.tf_base_dir,
-        args.colocalization_tf,
-        "output",
-        f"{cell_line_key}_{args.colocalization_tf}.bed"
-    )
-    if not validate_file_exists(colocalization_path):
-        logging.warning(f"Colocalization file not found for {cell_line} at {colocalization_path}")
-        return []
-
-    colocal_df = pd.read_csv(colocalization_path, sep="\t", header=None, names=["chr", "start", "end", "count"])
-    colocal_df = filter_by_peak_length(colocal_df)
-    colocal_df = filter_by_chromosomes(colocal_df)
-
-    overlapping_df, negative_df = get_overlapping_and_negative_samples(df, colocal_df, cell_line, args)
-    return [overlapping_df, negative_df]
-
-def get_overlapping_and_negative_samples(df1: pd.DataFrame, df2: pd.DataFrame, cell_line: str, args) -> (pd.DataFrame, pd.DataFrame):
-    atac_path = os.path.join(args.aligned_chip_data_dir, cell_line, "peaks", f"{cell_line}.filtered.broadPeak")
-    atac_df = pd.read_csv(atac_path, sep="\t", usecols=[0, 1, 2], header=None, names=["chr", "start", "end"])
-    atac_df = filter_by_chromosomes(atac_df)
-
-    tf1_df = intersect_colocalization_bed_files(df1, atac_df, include_count=False)
-    tf2_df = intersect_colocalization_bed_files(df2, atac_df, include_count=False)
-    overlapping_df = intersect_colocalization_bed_files(tf1_df, tf2_df[["chr", "start", "end", "count"]], include_count=True)
-    overlapping_df["cell_line"] = cell_line
-    overlapping_df["label"] = POSITIVE_LABEL
-
-    if args.chip_data_option == ChipDataOption.CHIP_PROVIDED:
-        negative_df = subtract_bed_files(tf1_df, tf2_df[["chr", "start", "end"]])
-    else:
-        negative_df = subtract_bed_files(atac_df, tf1_df[["chr", "start", "end"]])
-        negative_df = subtract_bed_files(negative_df, tf2_df[["chr", "start", "end"]])
-
-    negative_df = assign_negative_label(negative_df)
-    negative_df["count_2"] = 0
-    negative_df["cell_line"] = cell_line
-
-    logging.info(f"Cell line: {cell_line}; Overlapping: {len(overlapping_df)}, Negative: {len(negative_df)}")
-    return overlapping_df, negative_df
-
-def process_bed_files(input_dir: str, cell_lines: dict, args) -> list:
+def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
     processed_dfs = []
-    for filename in os.listdir(input_dir):
-        if not filename.endswith(".bed"):
+    # Get cell lines present in the merged directory
+    present_cell_lines = {
+        filename.split("_")[0]
+        for filename in os.listdir(chip_input_dir)
+        if filename.endswith(".bed")
+    }
+    # Only keep mappings for cell lines that have chip files
+    filtered_cell_lines = {k: v for k, v in cell_lines.items() if k in present_cell_lines}
+
+    for cell_line_key, cell_line in filtered_cell_lines.items():
+        atac_path = os.path.join(
+            args.aligned_chip_data_dir, cell_line, "peaks", f"{cell_line}.filtered.broadPeak"
+        )
+        if not validate_file_exists(atac_path):
+            logging.warning(f"ATAC file not found for {cell_line} at {atac_path}")
             continue
+        atac_df = pd.read_csv(atac_path, sep="\t", header=None, names=["chr", "start", "end"], usecols=[0, 1, 2])
+        atac_df = filter_by_peak_length(atac_df)
+        atac_df = filter_by_chromosomes(atac_df)
+        chip_files = []
+        for filename in os.listdir(chip_input_dir):
+            if not filename.endswith(".bed"):
+                continue
+            if filename.split("_")[0] == cell_line_key:
+                chip_files.append(os.path.join(chip_input_dir, filename))
 
-        cell_line_key = filename.split("_")[0]
-        cell_line = cell_lines.get(cell_line_key)
-        if not cell_line:
-            logging.warning(f"Cell line not found for key {cell_line_key}")
-            continue
-
-        input_path = os.path.join(input_dir, filename)
-        df = pd.read_csv(input_path, sep="\t", header=None, names=["chr", "start", "end", "count"])
-        df = filter_by_peak_length(df)
-        df = filter_by_chromosomes(df)
-        df = label_peaks(df, args.balance_option, args.data_filter_option)
-        df["cell_line"] = cell_line
-
-        if args.colocalization_tf:
-            colocal_data = process_colocalization(df, cell_line_key, cell_line, args)
-            processed_dfs.extend(colocal_data)
+        if chip_files:
+            chip_dfs = []
+            for file in chip_files:
+                chip_df = pd.read_csv(file, sep="\t", header=None, names=["chr", "start", "end", "count"])
+                chip_df = filter_by_peak_length(chip_df)
+                chip_df = filter_by_chromosomes(chip_df)
+                chip_dfs.append(chip_df)
+            if chip_dfs:
+                chip_df_combined = pd.concat(chip_dfs, ignore_index=True)
+                chip_df_combined = drop_duplicates_and_sort(chip_df_combined)
+                atac_positive = intersect_bed_files(atac_df, chip_df_combined)
+                atac_positive["label"] = POSITIVE_LABEL
+                atac_negative = subtract_bed_files(atac_df, chip_df_combined)
+                atac_negative = assign_negative_label(atac_negative)
+                atac_positive["cell_line"] = cell_line
+                atac_negative["cell_line"] = cell_line
+                processed_dfs.append(atac_positive)
+                processed_dfs.append(atac_negative)
+            else:
+                logging.warning(f"No valid chip peaks found for {cell_line_key}")
+                atac_df = assign_negative_label(atac_df)
+                atac_df["cell_line"] = cell_line
+                processed_dfs.append(atac_df)
         else:
-            neg_df = get_negative_samples(df, cell_line, args.aligned_chip_data_dir, args.negative_regions_bed)
-            processed_dfs.append(df)
-            processed_dfs.append(neg_df)
-
+            logging.warning(f"No chip files found for cell line key {cell_line_key}")
+            atac_df = assign_negative_label(atac_df)
+            atac_df["cell_line"] = cell_line
+            processed_dfs.append(atac_df)
+    
     return processed_dfs
 
+# ============================================================
+# Enhancer/Promoter Region Processing
+# ============================================================
 def process_enhancer_promoter_regions(combined_df: pd.DataFrame, enhancer_bed: str, promoter_bed: str) -> pd.DataFrame:
     enhancer_df = pd.read_csv(enhancer_bed, sep="\t", header=None,
                               names=["chr", "start", "end", "EH38D", "EH38E", "feature_type"])
@@ -336,17 +267,30 @@ def split_dataset(combined_df: pd.DataFrame, args):
         validation_set = combined_df.sample(frac=DEFAULT_VALIDATION_SPLIT, random_state=42)
         training_set = combined_df.drop(validation_set.index)
         logging.info("No validation set specified, using default 20% split")
-
     return training_set, validation_set
 
 def save_dataset(df: pd.DataFrame, path: str) -> None:
     df.to_csv(path, sep="\t", index=False)
 
 # ============================================================
+# Cell Line Mapping Check
+# ============================================================
+def check_cell_lines_in_chip(chip_input_dir: str, cell_lines: dict) -> None:
+    present = set()
+    missing = set(cell_lines.keys())
+    for filename in os.listdir(chip_input_dir):
+        if filename.endswith(".bed"):
+            key = filename.split("_")[0]
+            present.add(key)
+            missing.discard(key)
+    # logging.info(f"Chip files present: {sorted(present)}")
+    logging.info(f"Chip files missing: {sorted(missing)}")
+
+# ============================================================
 # Argument Parsing
 # ============================================================
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Process TF binding data.")
+    parser = argparse.ArgumentParser(description="Process TF binding data with ATAC primary input.")
     parser.add_argument("--tf", type=str, help="Transcription Factor")
     parser.add_argument("--balance", action="store_true", help="Balance dataset labels")
     parser.add_argument("--enhancer_promotor_only", action="store_true", help="Consider only enhancer/promoter regions")
@@ -380,16 +324,12 @@ def parse_arguments():
 
     if args.chip_provided and not args.colocalization_tf:
         parser.error("--chip_provided requires --colocalization_tf")
-
     if args.negative_tf:
         raise NotImplementedError("The feature 'negative_tf' is not implemented yet")
-
     if args.no_ground_truth and not args.input_bed_file:
         parser.error("--input_bed_file is required when --no_ground_truth is set")
-
     if not args.no_ground_truth and not args.tf:
         parser.error("--tf is required unless --no_ground_truth is set")
-
     return args
 
 def load_cell_line_mapping(file_path: str) -> dict:
@@ -417,7 +357,6 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     if args.ground_truth_option == GroundTruthOption.NO_GROUND_TRUTH:
-        # Prediction mode
         df = pd.read_csv(args.input_bed_file, sep="\t", header=None, names=["chr", "start", "end"], usecols=[0, 1, 2])
         df = filter_by_peak_length(df)
         df = filter_by_chromosomes(df)
@@ -429,14 +368,18 @@ def main():
         logging.info(f"Prediction data saved to: {output_path}")
         return
 
-    # Training/Validation mode
     tf = args.tf
-    input_dir = os.path.join(args.tf_base_dir, tf, "output")
+    # The chip peaks are still stored in the merged directory
+    chip_input_dir = os.path.join(args.tf_base_dir, tf, "merged")
     cell_lines = load_cell_line_mapping(args.cell_line_mapping)
 
-    processed = process_bed_files(input_dir, cell_lines, args)
+    # Check which chip files are available
+    check_cell_lines_in_chip(chip_input_dir, cell_lines)
+
+    # Process ATAC peaks and label them according to chip overlap
+    processed = process_atac_files(chip_input_dir, cell_lines, args)
     if not processed:
-        logging.error("No data processed. Check the input directory and the cell line mapping file.")
+        logging.error("No data processed. Check the ATAC directory and the cell line mapping file.")
         return
 
     combined_df = pd.concat(processed, ignore_index=True)
@@ -456,6 +399,12 @@ def main():
 
     save_dataset(training_set, training_set_file)
     save_dataset(validation_set, validation_set_file)
+
+    # Log the number of positive and negative hits for each cell line
+    for cell_line, group in combined_df.groupby('cell_line'):
+        positive_hits = group[group['label'] == POSITIVE_LABEL].shape[0]
+        negative_hits = group[group['label'] == NEGATIVE_LABEL].shape[0]
+        logging.info(f"Cell line {cell_line}: {positive_hits} positive hits, {negative_hits} negative hits")
 
     logging.info(f"Training set saved to: {training_set_file}")
     logging.info(f"Validation set saved to: {validation_set_file}")

@@ -22,7 +22,7 @@ from einops.layers.torch import Rearrange
 
 from deepseq import DeepSeq
 from earlystopping import EarlyStopping
-from tf_dataloader import TFIntervalDataset
+from tf_dataloader import TFIntervalDataset, TransformType, FilterType, Mode
 
 
 # ---------------------------------------------
@@ -33,7 +33,7 @@ BATCH_SIZE_FALLBACK: int = 1
 MAX_GRAD_NORM: float = 0.2
 WARMUP_STEPS_GPU: int = 1000
 WARMUP_STEPS_CPU: int = 0
-PRINT_FREQ: int = 500
+PRINT_FREQ: int = 1000
 DEFAULT_CONTEXT_LENGTH: int = 4096
 DEFAULT_LR: float = 5e-4
 DEFAULT_WEIGHT_DECAY: float = 0.1
@@ -60,6 +60,8 @@ class HyperParams:
     early_stopping_patience: int = 2
     focal_loss_alpha: float = 1.0
     focal_loss_gamma: float = 2.0
+    transform_type: TransformType = TransformType.NONE
+    filter_type: FilterType = FilterType.NONE
 
 
 # ---------------------------------------------
@@ -191,7 +193,9 @@ def get_data_loaders(
         rc_aug=True,
         shift_augs=(-500, 500),
         context_length=DEFAULT_CONTEXT_LENGTH,
-        mode="train",
+        mode=Mode.TRAIN,
+        transform_type=hyperparams.transform_type,
+        filter_type=hyperparams.filter_type,
     )
 
     valid_dataset = TFIntervalDataset(
@@ -201,7 +205,9 @@ def get_data_loaders(
         return_augs=False,
         rc_aug=False,
         context_length=DEFAULT_CONTEXT_LENGTH,
-        mode="train",
+        mode=Mode.VALIDATION,
+        transform_type=hyperparams.transform_type,
+        filter_type=hyperparams.filter_type,
     )
 
     train_loader = DataLoader(
@@ -383,7 +389,7 @@ def main(
     hyperparams: HyperParams,
     train_file: str,
     valid_file: str,
-    local_rank: int
+    local_rank: int,
 ) -> None:
     """
     Main function to train and validate the model.
@@ -488,6 +494,8 @@ if __name__ == "__main__":
     parser.add_argument("--local_rank", type=int, default=int(os.environ.get("LOCAL_RANK", 0)))
     parser.add_argument("--train-file", type=str, default="training_combined.csv")
     parser.add_argument("--valid-file", type=str, default="validation_combined.csv")
+    parser.add_argument("--transform-type", type=str, default="NONE")
+    parser.add_argument("--filter-type", type=str, default="NONE")
 
     args = parser.parse_args()
 
@@ -498,6 +506,10 @@ if __name__ == "__main__":
         raise ValueError("Data directory is required.")
     if not os.path.isdir(args.data_dir):
         raise ValueError(f"Data directory {args.data_dir} does not exist.")
+    
+    # convert string to enum
+    transform_type = TransformType.from_str(args.transform_type)
+    filter_type = FilterType.from_str(args.filter_type)
 
     hyperparams = HyperParams(
         num_epochs=args.num_epochs,
@@ -506,6 +518,8 @@ if __name__ == "__main__":
         early_stopping_patience=args.early_stopping_patience,
         focal_loss_alpha=args.focal_loss_alpha,
         focal_loss_gamma=args.focal_loss_gamma,
+        transform_type=args.transform_type,
+        filter_type=args.filter_type,
     )
 
     main(
@@ -514,5 +528,5 @@ if __name__ == "__main__":
         hyperparams=hyperparams,
         train_file=args.train_file,
         valid_file=args.valid_file,
-        local_rank=args.local_rank
+        local_rank=args.local_rank,
     )
