@@ -62,10 +62,6 @@ def main():
     sagemaker_session = Session()
     inputs = sagemaker_session.upload_data(path=local_dir, bucket=args.s3_bucket, key_prefix=args.s3_prefix)
 
-
-    transform_type = TransformType.from_str(args.transform_type)
-    filter_type = FilterType.from_str(args.filter_type)
-
     # Configure SageMaker training
     print("Setting up SageMaker training job...")
     estimator = PyTorch(

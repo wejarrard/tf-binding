@@ -5,7 +5,7 @@ base_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scr
 
 # List of transcription factors
 tf_list = [
-    "FOXA2"
+    "FOXA1", "FOXA2", "AR", "NEUROD1", "ASCL1", "RB1", "HOXB13", "E2F1", "E2F2", "CTCF"
 ]
 # tf_list = [
 #     'ASCL1', 'FOXA1', 'NR3C1', 'HDAC3', 'HOXB13', 'HDAC1', 'TP53', 'TRIM24', 'LEO1', 'SMARCA5', 'INO80', 'SMARCA4', 
@@ -44,8 +44,10 @@ for tf in tf_list:
 #$ -o {base_dir}/{log_dir}/{tf}.out
 #$ -j y
 #$ -V
-echo "sourcing bashrc"
-source /data1/home/wjarrard/.bashrc
+
+
+source ~/.bashrc
+
 echo "activating conda environment"
 conda activate processing
 
@@ -70,7 +72,7 @@ with open(master_script_path, "w") as master_script_file:
     master_script_file.write(master_script_content)
 
 # Make the master script executable
-os.chmod(master_script_path, 0o755)
+# os.chmod(master_script_path, 0o755)
 
 print(f"Generated {len(tf_list)} qsub scripts in {output_dir}")
 print(f"Master script to submit all qsub scripts created at {master_script_path}")

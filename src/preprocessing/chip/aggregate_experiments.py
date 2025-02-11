@@ -9,6 +9,7 @@ def main(output_dir):
     # Grouping the data by cell line and TF, aggregating the experiments into lists
     grouped_data = data.groupby(['Cell_Line', 'TF']).agg({'Experiment': lambda x: ','.join(x)}).reset_index()
 
+
     # Displaying the grouped data
     grouped_data.to_csv(os.path.join(output_dir, 'aggregate.tsv'), header=False, sep='\t', index=False)
 

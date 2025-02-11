@@ -14,6 +14,7 @@ from deepseq import DeepSeq
 from earlystopping import EarlyStopping
 from einops.layers.torch import Rearrange
 from old_dataloader import TFIntervalDataset
+# from tf_dataloader import TFIntervalDataset, Mode, TransformType, FilterType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -187,6 +188,19 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         mode="train",
     )
 
+    # train_dataset = TFIntervalDataset(
+    #     bed_file=os.path.join(data_dir, 'data_splits', 'AR_22Rv1.csv'),
+    #     fasta_file=os.path.join(data_dir, "genome.fa"),
+    #     cell_lines_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines",
+    #     return_augs=False,
+    #     rc_aug=False,
+    #     shift_augs=(-50, 50),
+    #     context_length=4_096,
+    #     mode=Mode.TRAIN,
+    #     transform_type=TransformType.LOG10,
+    #     filter_type=FilterType.NONE,
+    # )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=hyperparams.batch_size,
@@ -196,16 +210,19 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         drop_last=True,
     )
 
-    valid_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, hyperparams.valid_file),
-        fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
-        num_tfs=num_tfs,
-        return_augs=False,
-        rc_aug=False,
-        context_length=4_096,
-        mode="train",
-    )
+    # valid_dataset = TFIntervalDataset(
+    #     bed_file=os.path.join(data_dir, hyperparams.valid_file),
+    #     fasta_file=os.path.join(data_dir, "genome.fa"),
+    #     cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+    #     num_tfs=num_tfs,
+    #     return_augs=False,
+    #     rc_aug=False,
+    #     context_length=4_096,
+    #     mode="train",
+    # )
+
+    valid_dataset = TFIntervalDataset
+    
 
     valid_loader = DataLoader(
         valid_dataset,

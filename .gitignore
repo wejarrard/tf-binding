@@ -174,3 +174,5 @@ sratoolkit*
 *logs*
 qsub_scripts*
 *output/*
+
+miniconda3
