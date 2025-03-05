@@ -31,7 +31,6 @@ class BalanceOption(Enum):
     NO_BALANCE = "no_balance"
 
 class RegionFilterOption(Enum):
-    ENHANCER_PROMOTER_ONLY = "enhancer_promoter_only"
     ALL_REGIONS = "all_regions"
 
 class DataFilterOption(Enum):
@@ -104,7 +103,7 @@ def subtract_bed_files(main_df: pd.DataFrame, subtract_df: pd.DataFrame) -> pd.D
 
     return drop_duplicates_and_sort(subtracted_df)
 
-def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame, region_type: str = None) -> pd.DataFrame:
+def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame) -> pd.DataFrame:
     col_names = main_df.columns.tolist()
     with tempfile.NamedTemporaryFile(delete=False, mode='w') as main_file, \
          tempfile.NamedTemporaryFile(delete=False, mode='w') as intersect_file, \
@@ -120,7 +119,6 @@ def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame, regio
         command = f"bedtools intersect -a {main_path} -b {intersect_path} -wa -wb > {result_path}"
         run_bedtools_command(command)
 
-
         # Simply specify the exact columns we want: 0, 1, 2, and 6
         intersected_df = pd.read_csv(result_path, sep="\t", header=None, usecols=[0, 1, 2, 6], names=['chr', 'start', 'end', 'count'])
         
@@ -128,10 +126,7 @@ def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame, regio
     os.remove(intersect_path)
     os.remove(result_path)
 
-    intersected_df = drop_duplicates_and_sort(intersected_df)
-    if region_type:
-        intersected_df["region_type"] = region_type
-    return intersected_df
+    return drop_duplicates_and_sort(intersected_df)
 
 def intersect_colocalization_bed_files(df: pd.DataFrame, intersect_df: pd.DataFrame, include_count: bool = False) -> pd.DataFrame:
     col_names = df.columns.tolist()
@@ -197,31 +192,6 @@ def label_positive_peaks(df: pd.DataFrame) -> pd.DataFrame:
     df["label"] = POSITIVE_LABEL
     return df
 
-# def label_positive_peaks(df: pd.DataFrame) -> pd.DataFrame:
-#     # Create a copy to avoid modifying the original DataFrame
-#     df = df.copy()
-    
-#     if DataFilterOption.FILTER_DATA:
-#         # Filter out zeros for statistics calculation
-#         nonzero_counts = df[df["count"] > 0]["count"]
-#         if len(nonzero_counts) == 0:
-#             df["label"] = POSITIVE_LABEL
-#             return df
-            
-#         max_count = nonzero_counts.max()
-#         if max_count <= 2:
-#             df["label"] = POSITIVE_LABEL
-#             return df
-#         elif max_count > MAX_COUNT_THRESHOLD:
-#             threshold = nonzero_counts.quantile(HIGH_COUNT_QUANTILE)
-#             df = df[df["count"] > threshold]
-#         elif max_count > MID_COUNT_THRESHOLD:
-#             threshold = nonzero_counts.median()
-#             df = df[df["count"] > threshold]
-    
-#     df["label"] = POSITIVE_LABEL
-#     return df
-
 # ============================================================
 # Process ATAC Peaks and Label Them with Chip Data
 # ============================================================
@@ -286,22 +256,6 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
     
     return processed_dfs
 
-# ============================================================
-# Enhancer/Promoter Region Processing
-# ============================================================
-def process_enhancer_promoter_regions(combined_df: pd.DataFrame, enhancer_bed: str, promoter_bed: str) -> pd.DataFrame:
-    enhancer_df = pd.read_csv(enhancer_bed, sep="\t", header=None,
-                              names=["chr", "start", "end", "EH38D", "EH38E", "feature_type"])
-    promoter_df = pd.read_csv(promoter_bed, sep="\t", header=None,
-                              names=["chr", "start", "end", "EL38D", "EL38E", "feature_type"])
-
-    enhancer_intersect = intersect_bed_files(combined_df, enhancer_df, "enhancer")
-    promoter_intersect = intersect_bed_files(combined_df, promoter_df, "promoter")
-
-    combined_filtered_df = pd.concat([enhancer_intersect, promoter_intersect])
-    combined_filtered_df = pd.get_dummies(combined_filtered_df, columns=["region_type"])
-    return combined_filtered_df
-
 def split_dataset(combined_df: pd.DataFrame, args):
     if args.validation_cell_lines:
         validation_set = combined_df[combined_df["cell_line"].isin(args.validation_cell_lines)]
@@ -359,6 +313,7 @@ def check_cell_lines_in_chip(chip_input_dir: str, cell_lines: dict, args) -> Non
     logging.info(f"Will process: {len(usable_cell_lines)} cell lines")
     logging.info(f"Will skip: {len(chip_cell_lines) - len(usable_cell_lines)} cell lines")
     logging.info("\n" + "="*50)
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -366,14 +321,14 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Process TF binding data with ATAC primary input.")
     parser.add_argument("--tf", type=str, help="Transcription Factor")
     parser.add_argument("--balance", action="store_true", help="Balance dataset labels")
-    parser.add_argument("--enhancer_promotor_only", action="store_true", help="Consider only enhancer/promoter regions")
     parser.add_argument("--dont_filter", action="store_true", help="Do not filter data")
     parser.add_argument("--positive_only", action="store_true", help="Return only positive samples")
     validation_group = parser.add_mutually_exclusive_group(required=False)
     validation_group.add_argument("--validation_cell_lines", type=str, nargs="*", help="Cell lines for validation set")
     validation_group.add_argument("--validation_chromosomes", type=str, nargs="*", help="Chromosomes for validation set")
+    
     group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument("--negative_tf", type=str, help="Transcription factor for negative dataset")
+    group.add_argument("--contrasting_tf", type=str, help="Transcription factor for negative dataset")
     group.add_argument("--colocalization_tf", type=str, help="Transcription factor for colocalization dataset")
     parser.add_argument("--chip_provided", action="store_true", help="Use provided ChIP data for negative set")
     parser.add_argument("--cell_line_mapping", type=str, default="cell_line_mapping.json")
@@ -392,18 +347,12 @@ def parse_arguments():
     parser.add_argument("--output_file", type=str, default="prediction_data.csv")
     parser.add_argument("--negative_regions_bed", type=str, nargs="+", help="Path(s) to BED file(s) for negative samples")
 
-    parser.add_argument("--enhancer_bed", type=str,
-                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-ELS.bed")
-    parser.add_argument("--promoter_bed", type=str,
-                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-PLS.bed")
-
-
     args = parser.parse_args()
 
     if args.chip_provided and not args.colocalization_tf:
         parser.error("--chip_provided requires --colocalization_tf")
-    if args.negative_tf:
-        raise NotImplementedError("The feature 'negative_tf' is not implemented yet")
+    if args.contrasting_tf:
+        raise NotImplementedError("The feature 'contrasting_tf' is not implemented yet")
     if args.no_ground_truth and not args.input_bed_file:
         parser.error("--input_bed_file is required when --no_ground_truth is set")
     if not args.no_ground_truth and not args.tf:
@@ -426,7 +375,7 @@ def main():
 
     # Convert arguments to enums
     args.balance_option = BalanceOption.BALANCE_LABELS if args.balance else BalanceOption.NO_BALANCE
-    args.region_filter_option = RegionFilterOption.ENHANCER_PROMOTER_ONLY if args.enhancer_promotor_only else RegionFilterOption.ALL_REGIONS
+    args.region_filter_option = RegionFilterOption.ALL_REGIONS
     args.data_filter_option = DataFilterOption.NO_FILTER if args.dont_filter else DataFilterOption.FILTER_DATA
     args.label_option = LabelOption.POSITIVE_ONLY if args.positive_only else LabelOption.BOTH_LABELS
     args.chip_data_option = ChipDataOption.CHIP_PROVIDED if args.chip_provided else ChipDataOption.NO_CHIP
@@ -461,9 +410,6 @@ def main():
         return
 
     combined_df = pd.concat(processed, ignore_index=True)
-
-    if args.region_filter_option == RegionFilterOption.ENHANCER_PROMOTER_ONLY:
-        combined_df = process_enhancer_promoter_regions(combined_df, args.enhancer_bed, args.promoter_bed)
 
     if args.label_option == LabelOption.POSITIVE_ONLY:
         combined_df = combined_df[combined_df["label"] == POSITIVE_LABEL]
