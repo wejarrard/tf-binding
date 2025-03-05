@@ -3,7 +3,7 @@
 This directory contains scripts for analyzing and interpreting sequence motifs. Follow these steps in order:
 
 1. **Generate Base Data** 
-   - Run `base.ipynb` notebook
+   - Run `interpretability.ipynb` notebook
    - This extracts seqlets (sequence segments) and their attribution scores from the model
    - Runs `python levenstein.py --jaspar motif.jaspar --seqlets positive_seqlets.csv --output lev_pwm.csv`
    - Computes Levenshtein distances between seqlets and known motif PWMs from JASPAR database

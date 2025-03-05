@@ -139,11 +139,5 @@ export -f process_line
 # Use parallel to process each line from the input file, sending the correct fields to the function
 cat $input_bed_file | parallel --colsep '\t' process_line {1} {2} {3}
 
-# Non-parallel version for debugging
-# echo "Running non-parallel version for debugging:"
-# while IFS=$'\t' read -r cell_line tf identifiers; do
-#     process_line "$cell_line" "$tf" "$identifiers"
-# done < "$input_bed_file"
-
 # Remove empty files
 find "$output_dir" -type f -empty -delete

@@ -283,7 +283,7 @@ class GenomicInterval:
         return_seq_indices=False,
         shift_augs=None,
         rc_aug=False,
-        filter_type=FilterType.SAVGOL,
+        filter_type=FilterType.NONE,
         filter_params=None,      
         transform_type=TransformType.LOG10,
         transform_params=None,
@@ -519,6 +519,8 @@ class TFIntervalDataset(Dataset):
         pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup_mod"
         if not pileup_dir.exists():
             pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup"
+            if not pileup_dir.exists():
+                pileup_dir = self.cell_lines_dir / "pileup_mod"
         if self.mode == Mode.TRAIN or self.mode == Mode.VALIDATION:
             return (
                 self.processor(

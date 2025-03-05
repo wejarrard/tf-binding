@@ -1,13 +1,13 @@
 {
-    "AR": "s3://tf-binding-sites/finetuning/results/output/AR-min-max--1-to-1-2024-10-31-17-32-12-640/output/model.tar.gz",
+    "AR": "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-2025-02-14-20-55-42-184/output/model.tar.gz",
     "AR-log10": "s3://tf-binding-sites/finetuning/results/output/AR-Full-Data-Model-2024-10-17-04-20-48-548/output/model.tar.gz",
     "AR-log10-new": "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-none-none-2025-01-23-20-24-30-568/output/model.tar.gz",
-    "AR-min-max-0-to-1": "s3://tf-binding-sites/finetuning/results/output/AR-min-max-0-to-1-2024-10-31-17-29-24-059/output/model.tar.gz",
-    "AR-normal-dist": "s3://tf-binding-sites/finetuning/results/output/AR-normal-dist-2024-10-31-17-02-45-299/output/model.tar.gz",
-    "FOXA1": "s3://tf-binding-sites/finetuning/results/output/FOXA1-min-max--1-to-1-2024-10-31-17-58-51-787/output/model.tar.gz",
-    "NEUROD1": "s3://tf-binding-sites/finetuning/results/output/NEUROD1-2024-11-22-20-44-17-138/output/model.tar.gz",
+    "FOXA1": "s3://tf-binding-sites/finetuning/results/output/FOXA1-22Rv1-2025-02-15-18-14-22-064/output/model.tar.gz",
+    "NEUROD1-old": "s3://tf-binding-sites/finetuning/results/output/NEUROD1-2024-11-22-20-44-17-138/output/model.tar.gz",
     "RB1": "s3://tf-binding-sites/finetuning/results/output/RB1-VCAP-gaussian-smoothing-2024-12-04-17-06-55-459/output/model.tar.gz",
     "NEUROD1-NCI-H446": "s3://tf-binding-sites/finetuning/results/output/NEUROD1-NCI-H446-gaussian-smoothing-2024-12-09-23-13-20-040/output/model.tar.gz",
     "NEUROD1-chr3": "s3://tf-binding-sites/finetuning/results/output/NEUROD1-chr3-gaussian-smoothing-2024-12-09-23-16-02-891/output/model.tar.gz",
-    "ASCL1": "s3://tf-binding-sites/finetuning/results/output/ASCL1-chr3-gaussian-smoothing-2024-12-10-00-02-42-803/output/model.tar.gz"
+    "ASCL1": "s3://tf-binding-sites/finetuning/results/output/ASCL1-DMS53-2025-02-18-01-04-56-875/output/model.tar.gz",
+    "ASCL1-old": "s3://tf-binding-sites/finetuning/results/output/ASCL1-chr3-gaussian-smoothing-2024-12-10-00-02-42-803/output/model.tar.gz",
+    "HOXB13": "s3://tf-binding-sites/finetuning/results/output/HOXB13-22Rv1-2025-02-18-23-29-14-654/output/model.tar.gz"
 }

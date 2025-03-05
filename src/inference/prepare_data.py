@@ -38,7 +38,7 @@ def main(compression: str, max_file_size: int, data_dir: str, output_path: str, 
         shift_augs=(0, 0),
         context_length=4_096,
         mode=Mode.INFERENCE,
-        transform_type=TransformType.LOG10,
+        transform_type=TransformType.NONE,
         filter_type=FilterType.NONE,
     )
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
@@ -50,7 +50,8 @@ def main(compression: str, max_file_size: int, data_dir: str, output_path: str, 
     jsonl_file = open_file(filename)
 
     try:
-        for item in tqdm(dataloader, desc="Preparing Data"):
+        total_items = len(dataloader)
+        for item in tqdm(dataloader, desc="Preparing Data", mininterval=1.0, miniters=max(1, total_items//20)):
             data_point = {
                 "input": item[0].numpy().tolist(),
                 "target": item[1].numpy().tolist(),

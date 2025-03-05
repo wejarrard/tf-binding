@@ -1,15 +1,57 @@
+import ast
+import os
 import time
 from pathlib import Path
 from random import random, randrange
+from enum import Enum, auto
 
 import numpy as np
 import polars as pl
 import pysam
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from pyfaidx import Fasta
-from torch.utils.data import Dataset
-import os
+from torch.utils.data import DataLoader, Dataset
+from scipy.signal import savgol_coeffs
+
+class FilterType(Enum):
+    NONE = auto()
+    GAUSSIAN = auto()
+    SAVGOL = auto()
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(f"Invalid FilterType: {value}")
+
+class TransformType(Enum):
+    NONE = auto()
+    LOG10 = auto()
+    MINMAX = auto()
+    LOG10_MINMAX = auto()
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(f"Invalid TransformType: {value}")
+    
+    
+
+class Mode(Enum):
+    TRAIN = auto()
+    VALIDATION = auto()
+    INFERENCE = auto()
 
 # helper functions
 
@@ -102,8 +144,84 @@ def seq_indices_reverse_complement(seq_indices):
 
 def one_hot_reverse_complement(one_hot):
     *_, n, d = one_hot.shape
-    assert d == 5, "must be one hot encoding with last dimension equal to 4"
+    assert d == 4, "must be one hot encoding with last dimension equal to 4"
     return torch.flip(one_hot, (-1, -2))
+
+
+import torch.nn.functional as F
+
+def gaussian_smooth_1d(values: torch.Tensor, kernel_size: int = 5, sigma: float = 1.0) -> torch.Tensor:
+    """
+    Apply 1D Gaussian smoothing to a tensor of values.
+    
+    Args:
+        values: Input tensor of shape (sequence_length, 1)
+        kernel_size: Size of Gaussian kernel (should be odd)
+        sigma: Standard deviation of Gaussian kernel
+    
+    Returns:
+        Smoothed tensor of same shape as input
+    """
+    # Ensure kernel size is odd
+    kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+    
+    # Create Gaussian kernel with explicit dtype
+    kernel = torch.exp(-torch.arange(-(kernel_size // 2), kernel_size // 2 + 1, dtype=torch.float32) ** 2 / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    
+    # Ensure both kernel and values are float32
+    kernel = kernel.float()
+    values = values.float()
+    
+    # Reshape kernel for 1D convolution
+    kernel = kernel.view(1, 1, -1)
+    
+    # Reshape input for convolution
+    values = values.view(1, 1, -1)
+    
+    # Apply padding to maintain sequence length
+    padding = (kernel_size - 1) // 2
+    
+    # Perform convolution
+    smoothed = F.conv1d(values, kernel, padding=padding)
+    
+    return smoothed.view(-1, 1)
+
+
+def savgol_smooth_1d(values: torch.Tensor, window_length: int = 5, polyorder: int = 2) -> torch.Tensor:
+    """
+    Apply 1D Savitzky-Golay smoothing to a tensor of values.
+    
+    Args:
+        values: Input tensor of shape (sequence_length, 1)
+        window_length: Length of the filter window (should be odd)
+        polyorder: Order of the polynomial used to fit the samples (must be less than window_length)
+    
+    Returns:
+        Smoothed tensor of same shape as input
+    """
+    # Ensure window length is odd
+    window_length = window_length if window_length % 2 == 1 else window_length + 1
+    
+    # Get Savitzky-Golay coefficients and convert to float32
+    coeffs = torch.tensor(savgol_coeffs(window_length, polyorder), dtype=torch.float32, device=values.device)
+    
+    # Ensure values are float32
+    values = values.float()
+    
+    # Reshape kernel for 1D convolution
+    kernel = coeffs.view(1, 1, -1)
+    
+    # Reshape input for convolution
+    values = values.view(1, 1, -1)
+    
+    # Apply padding to maintain sequence length
+    padding = (window_length - 1) // 2
+    
+    # Perform convolution
+    smoothed = F.conv1d(values, kernel, padding=padding)
+    
+    return smoothed.view(-1, 1)
 
 
 # PILEUP PROCESSING
@@ -156,7 +274,6 @@ def mask_sequence(input_tensor, mask_prob=0.15, mask_value=-1):
 
     return masked_tensor, labels
 
-
 class GenomicInterval:
     def __init__(
         self,
@@ -166,6 +283,10 @@ class GenomicInterval:
         return_seq_indices=False,
         shift_augs=None,
         rc_aug=False,
+        filter_type=FilterType.NONE,
+        filter_params=None,      
+        transform_type=TransformType.NONE,
+        transform_params=None,
     ):
         fasta_file = Path(fasta_file)
         assert fasta_file.exists(), "path to fasta file must exist"
@@ -174,10 +295,55 @@ class GenomicInterval:
         self.context_length = context_length
         self.shift_augs = shift_augs
         self.rc_aug = rc_aug
+        
+        # Validate filter_type is a FilterType enum
+        if isinstance(filter_type, str):
+            try:
+                filter_type = FilterType[filter_type.upper()]
+            except KeyError:
+                raise ValueError(f"Invalid filter type: {filter_type}. Must be one of {[f.name for f in FilterType]}")
+        elif not isinstance(filter_type, FilterType):
+            raise ValueError(f"filter_type must be a FilterType enum or string, got {type(filter_type)}")
+            
+        self.filter_type = filter_type
+        self.filter_params = filter_params or {}
+        self.transform_type = transform_type
+        self.transform_params = transform_params
+
+    def apply_smoothing(self, reads_tensor):
+        """Apply the selected smoothing filter to the reads tensor."""
+        if self.filter_type == FilterType.NONE:
+            return reads_tensor
+        elif self.filter_type == FilterType.GAUSSIAN:
+            return gaussian_smooth_1d(
+                reads_tensor,
+                kernel_size=self.filter_params.get('kernel_size', 5),
+                sigma=self.filter_params.get('sigma', 1.0)
+            )
+        elif self.filter_type == FilterType.SAVGOL:
+            return savgol_smooth_1d(
+                reads_tensor,
+                window_length=self.filter_params.get('window_length', 5),
+                polyorder=self.filter_params.get('polyorder', 2)
+            )
+        else:
+            raise ValueError(f"Unknown filter type: {self.filter_type}")
 
     @property
     def seqs(self):
         return Fasta(self.fasta_path)
+
+    def apply_transform(self, count, max_count=None, min_count=None):
+        """Apply the selected transform to the count value."""
+        if self.transform_type == TransformType.NONE:
+            return count
+        elif self.transform_type == TransformType.LOG10:
+            return np.log10(count) if count > 0 else 0
+        elif self.transform_type == TransformType.MINMAX:
+            return (count - min_count) / (max_count - min_count)
+        elif self.transform_type == TransformType.LOG10_MINMAX:
+            log_val = np.log10(count) if count > 0 else 0
+            return (log_val - min_count) / (max_count - min_count)
 
     def __call__(self, chr_name, start, end, pileup_dir, return_augs=False):
         interval_length = end - start
@@ -236,32 +402,36 @@ class GenomicInterval:
 
         one_hot = str_to_one_hot(seq)
 
+        if should_rc_aug:
+            one_hot = one_hot_reverse_complement(one_hot)
+
         # Initialize a column of zeros for the reads
         reads_tensor = torch.zeros((one_hot.shape[0], 1), dtype=torch.float)
         assert (
             reads_tensor.shape[0] == one_hot.shape[0]
         ), f"reads tensor must be same length as one hot tensor, reads: {reads_tensor.shape[0]} != one hot: {one_hot.shape[0]}"
-        extended_data = torch.cat((one_hot, reads_tensor), dim=-1)
-
+        
         df = process_pileups(pileup_dir, chr_name, start, end)
 
-        # Iterate over the rows of the filtered DataFrame and update the reads_tensor with count data
+        max_count = df["count"].max()
+        min_count = df["count"].min()
+
+        # Fill the reads tensor with scaled counts
         for row in df.iter_rows(named=True):
             position = row["position"]
             count = row["count"]
-
-            # Calculate the relative position directly without using a separate position_tensor
             relative_position = position - start - 1
+            scaled_count = self.apply_transform(count, max_count, min_count)
+            reads_tensor[relative_position, 0] = scaled_count
 
-            # Update the respective position in the extended_data tensor
-            extended_data[relative_position, 4] = count
-
-        if should_rc_aug:
-            extended_data = one_hot_reverse_complement(extended_data)
+        # Apply selected smoothing filter
+        smoothed_reads = self.apply_smoothing(reads_tensor)
+        
+        # Concatenate one-hot encoded sequence with smoothed reads
+        extended_data = torch.cat((one_hot, smoothed_reads), dim=-1)
 
         if not return_augs:
             return extended_data
-            # return one_hot
 
         rand_shift_tensor = torch.tensor([rand_shift])
         rand_aug_bool_tensor = torch.tensor([should_rc_aug])
@@ -332,11 +502,14 @@ class GenomeIntervalDataset(Dataset):
             interval[3],
             interval[4],
         )
+        start, end = int(start), int(end)
         chr_name = self.chr_bed_to_fasta_map.get(chr_name, chr_name)
 
         labels_encoded = self.one_hot_encode_(labels)
 
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+        # pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup_mod/"
+
 
         return (
             self.processor(
@@ -348,6 +521,34 @@ class GenomeIntervalDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
+
+
+
+
+def mask_sequence(input_tensor, mask_prob=0.15, mask_value=-1):
+    """
+    Masks the input sequence tensor with given probability.
+    Masks the entire row including all columns.
+    """
+    # Clone the input tensor to create labels
+    labels = input_tensor.clone()
+
+    # Calculate row mask
+    mask_rows = torch.bernoulli(
+        torch.ones((input_tensor.shape[0], 1)) * mask_prob
+    ).bool()
+
+    # Expand mask to all columns
+    mask = mask_rows.expand_as(input_tensor)
+
+    # Apply mask to input_tensor to create the masked tensor
+    masked_tensor = input_tensor.clone()
+    masked_tensor[mask] = mask_value
+
+    # Set the labels where mask is not True to -1 (or any invalid label)
+    labels[~mask] = -1  # only calculate loss on masked tokens
+
+    return masked_tensor, labels
 
 
 class MaskedGenomeIntervalDataset(GenomeIntervalDataset):
@@ -365,29 +566,29 @@ class MaskedGenomeIntervalDataset(GenomeIntervalDataset):
 
 
 if __name__ == "__main__":
-    data_dir = "./"
-    # torch.manual_seed(42)
+    data_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data"
+    cell_lines_dir = "/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
+    torch.manual_seed(42)
 
     dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "combined.bed"),
+        bed_file=os.path.join(data_dir, "data_splits", "combined_peaks.bed"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        cell_lines_dir=cell_lines_dir,
         return_augs=False,
         rc_aug=False,
-        shift_augs=(-3, 3),
+        shift_augs=(0, 0),
         context_length=16_384,
     )
 
-    random_index = torch.randint(0, len(dataset), (1,)).item()
-    extended_data = dataset[random_index]
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=True,
+    )
 
-    print("Extended Data:")
-    print(extended_data)
-
-    # Assuming extended_data[0] is your tensor
-    fifth_column = extended_data[0][:, 4]
-
-    # Finding the maximum value in the 5th column
-    max_value = torch.max(fifth_column)
-
-    print(max_value)
+    for i, data in enumerate(dataloader):
+        print(data)
+        break

@@ -190,7 +190,7 @@ def get_data_loaders(
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
-        rc_aug=True,
+        rc_aug=True, # Flip or not flip the sequence
         shift_augs=(-500, 500),
         context_length=DEFAULT_CONTEXT_LENGTH,
         mode=Mode.TRAIN,

@@ -174,7 +174,53 @@ def assign_negative_label(df: pd.DataFrame) -> pd.DataFrame:
 
 def balance_labels(df: pd.DataFrame) -> pd.DataFrame:
     min_count = df["label"].value_counts().min()
-    return df.groupby("label").apply(lambda x: x.sample(min_count)).reset_index(drop=True)
+    # Explicitly select all columns to keep them in the result
+    columns_to_keep = df.columns
+    return df.groupby("label")[columns_to_keep].apply(lambda x: x.sample(min_count)).reset_index(drop=True)
+
+def label_positive_peaks(df: pd.DataFrame) -> pd.DataFrame:
+    # Create a copy to avoid modifying the original DataFrame
+    df = df.copy()
+    
+    if DataFilterOption.FILTER_DATA:
+        max_count = df["count"].max()
+        if max_count <= 2:
+            df["label"] = POSITIVE_LABEL
+            return df
+        elif max_count > MAX_COUNT_THRESHOLD:
+            threshold = df["count"].quantile(HIGH_COUNT_QUANTILE)
+            df = df[df["count"] > threshold]
+        elif max_count > MID_COUNT_THRESHOLD:
+            threshold = df["count"].median()
+            df = df[df["count"] > threshold]
+    
+    df["label"] = POSITIVE_LABEL
+    return df
+
+# def label_positive_peaks(df: pd.DataFrame) -> pd.DataFrame:
+#     # Create a copy to avoid modifying the original DataFrame
+#     df = df.copy()
+    
+#     if DataFilterOption.FILTER_DATA:
+#         # Filter out zeros for statistics calculation
+#         nonzero_counts = df[df["count"] > 0]["count"]
+#         if len(nonzero_counts) == 0:
+#             df["label"] = POSITIVE_LABEL
+#             return df
+            
+#         max_count = nonzero_counts.max()
+#         if max_count <= 2:
+#             df["label"] = POSITIVE_LABEL
+#             return df
+#         elif max_count > MAX_COUNT_THRESHOLD:
+#             threshold = nonzero_counts.quantile(HIGH_COUNT_QUANTILE)
+#             df = df[df["count"] > threshold]
+#         elif max_count > MID_COUNT_THRESHOLD:
+#             threshold = nonzero_counts.median()
+#             df = df[df["count"] > threshold]
+    
+#     df["label"] = POSITIVE_LABEL
+#     return df
 
 # ============================================================
 # Process ATAC Peaks and Label Them with Chip Data
@@ -187,16 +233,18 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
         for filename in os.listdir(chip_input_dir)
         if filename.endswith(".bed")
     }
-    # Only keep mappings for cell lines that have chip files
-    filtered_cell_lines = {k: v for k, v in cell_lines.items() if k in present_cell_lines}
+    # Only keep mappings for cell lines that have chip files and ATAC files
+    filtered_cell_lines = {
+        k: v for k, v in cell_lines.items() 
+        if k in present_cell_lines and validate_file_exists(
+            os.path.join(args.aligned_chip_data_dir, v, "peaks", f"{v}.filtered.broadPeak")
+        )
+    }
 
     for cell_line_key, cell_line in filtered_cell_lines.items():
         atac_path = os.path.join(
             args.aligned_chip_data_dir, cell_line, "peaks", f"{cell_line}.filtered.broadPeak"
         )
-        if not validate_file_exists(atac_path):
-            logging.warning(f"ATAC file not found for {cell_line} at {atac_path}")
-            continue
         atac_df = pd.read_csv(atac_path, sep="\t", header=None, names=["chr", "start", "end"], usecols=[0, 1, 2])
         atac_df = filter_by_peak_length(atac_df)
         atac_df = filter_by_chromosomes(atac_df)
@@ -218,7 +266,7 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
                 chip_df_combined = pd.concat(chip_dfs, ignore_index=True)
                 chip_df_combined = drop_duplicates_and_sort(chip_df_combined)
                 atac_positive = intersect_bed_files(atac_df, chip_df_combined)
-                atac_positive["label"] = POSITIVE_LABEL
+                atac_positive = label_positive_peaks(atac_positive)
                 atac_negative = subtract_bed_files(atac_df, chip_df_combined)
                 atac_negative = assign_negative_label(atac_negative)
                 atac_positive["cell_line"] = cell_line
@@ -275,17 +323,42 @@ def save_dataset(df: pd.DataFrame, path: str) -> None:
 # ============================================================
 # Cell Line Mapping Check
 # ============================================================
-def check_cell_lines_in_chip(chip_input_dir: str, cell_lines: dict) -> None:
-    present = set()
-    missing = set(cell_lines.keys())
-    for filename in os.listdir(chip_input_dir):
-        if filename.endswith(".bed"):
-            key = filename.split("_")[0]
-            present.add(key)
-            missing.discard(key)
-    # logging.info(f"Chip files present: {sorted(present)}")
-    logging.info(f"Chip files missing: {sorted(missing)}")
+def check_cell_lines_in_chip(chip_input_dir: str, cell_lines: dict, args) -> None:
+    chip_cell_lines = {
+        filename.split("_")[0]
+        for filename in os.listdir(chip_input_dir)
+        if filename.endswith(".bed")
+    }
+    
+    # Show all available ChIP files
+    logging.info("\nAll available ChIP cell lines in directory:")
+    for cell_line in sorted(chip_cell_lines):
+        if cell_line in cell_lines:
+            atac_path = os.path.join(
+                args.aligned_chip_data_dir, cell_lines[cell_line], "peaks", 
+                f"{cell_lines[cell_line]}.filtered.broadPeak"
+            )
+            if validate_file_exists(atac_path):
+                status = "✓ Will be used"
+            else:
+                status = "✗ Skipped (ATAC file not found in provided aligned_chip_data_dir)"
+        else:
+            status = "✗ Skipped (not in cell_line_mapping.json)"
+        logging.info(f"  - {cell_line}: {status}")
+    
+    usable_cell_lines = {
+        cell_line for cell_line in chip_cell_lines & set(cell_lines.keys())
+        if validate_file_exists(os.path.join(
+            args.aligned_chip_data_dir, cell_lines[cell_line], "peaks", 
+            f"{cell_lines[cell_line]}.filtered.broadPeak"
+        ))
+    }
 
+    logging.info("\n" + "="*50)
+    logging.info(f"Total ChIP files: {len(chip_cell_lines)}")
+    logging.info(f"Will process: {len(usable_cell_lines)} cell lines")
+    logging.info(f"Will skip: {len(chip_cell_lines) - len(usable_cell_lines)} cell lines")
+    logging.info("\n" + "="*50)
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -304,21 +377,26 @@ def parse_arguments():
     group.add_argument("--colocalization_tf", type=str, help="Transcription factor for colocalization dataset")
     parser.add_argument("--chip_provided", action="store_true", help="Use provided ChIP data for negative set")
     parser.add_argument("--cell_line_mapping", type=str, default="cell_line_mapping.json")
+    
     parser.add_argument("--tf_base_dir", type=str,
                         default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors")
     parser.add_argument("--aligned_chip_data_dir", type=str,
                         default="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines")
-    parser.add_argument("--enhancer_bed", type=str,
-                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-ELS.bed")
-    parser.add_argument("--promoter_bed", type=str,
-                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-PLS.bed")
+    
     parser.add_argument("--output_dir", type=str,
                         default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/data_splits")
     parser.add_argument("--validation_file", type=str, default="validation_combined.csv")
+
     parser.add_argument("--no_ground_truth", action="store_true", help="Prepare data for prediction without ground truth")
     parser.add_argument("--input_bed_file", type=str, help="Input BED file path for prediction")
     parser.add_argument("--output_file", type=str, default="prediction_data.csv")
     parser.add_argument("--negative_regions_bed", type=str, nargs="+", help="Path(s) to BED file(s) for negative samples")
+
+    parser.add_argument("--enhancer_bed", type=str,
+                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-ELS.bed")
+    parser.add_argument("--promoter_bed", type=str,
+                        default="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/scripts/data/GRCh38-PLS.bed")
+
 
     args = parser.parse_args()
 
@@ -374,7 +452,7 @@ def main():
     cell_lines = load_cell_line_mapping(args.cell_line_mapping)
 
     # Check which chip files are available
-    check_cell_lines_in_chip(chip_input_dir, cell_lines)
+    check_cell_lines_in_chip(chip_input_dir, cell_lines, args)
 
     # Process ATAC peaks and label them according to chip overlap
     processed = process_atac_files(chip_input_dir, cell_lines, args)
@@ -391,7 +469,9 @@ def main():
         combined_df = combined_df[combined_df["label"] == POSITIVE_LABEL]
 
     if args.balance_option == BalanceOption.BALANCE_LABELS:
-        combined_df = combined_df.groupby("cell_line").apply(balance_labels).reset_index(drop=True)
+        # Explicitly select all columns to keep them in the result
+        columns_to_keep = combined_df.columns
+        combined_df = combined_df.groupby("cell_line")[columns_to_keep].apply(balance_labels).reset_index(drop=True)
 
     training_set, validation_set = split_dataset(combined_df, args)
     training_set_file = os.path.join(args.output_dir, "training_combined.csv")
@@ -406,6 +486,7 @@ def main():
         negative_hits = group[group['label'] == NEGATIVE_LABEL].shape[0]
         logging.info(f"Cell line {cell_line}: {positive_hits} positive hits, {negative_hits} negative hits")
 
+    logging.info("\n" + "="*50)
     logging.info(f"Training set saved to: {training_set_file}")
     logging.info(f"Validation set saved to: {validation_set_file}")
 
