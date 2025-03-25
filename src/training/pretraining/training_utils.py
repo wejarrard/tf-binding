@@ -11,6 +11,11 @@ from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import umap
+from sklearn.preprocessing import StandardScaler
 
 
 def count_directories(path: str) -> int:
@@ -135,7 +140,7 @@ def train_one_epoch(
 
         if rank == 0:
 
-            if batch_idx % 500 == 0 and batch_idx != 0:
+            if batch_idx % 1000 == 0:
                 print(
                     f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} | LR: {scheduler.get_last_lr()[0]:.8f}"
                 )
@@ -145,25 +150,70 @@ def train_one_epoch(
 
     return average_loss, accuracy
 
-
 def validate_one_epoch(
     model,
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,
     n_classes=1,
-):  # Returns both average loss and accuracy
+    enable_umap=False,
+    target_layer='linear_512',
+    umap_samples=500,
+    umap_output_dir='umap_results'
+):
+    """
+    Validates one epoch and optionally performs UMAP visualization on intermediate activations.
+    
+    Args:
+        model: The neural network model
+        criterion: Loss function
+        device: Device to run validation on
+        val_loader: DataLoader for validation data
+        n_classes: Number of output classes
+        enable_umap: Whether to perform UMAP visualization
+        target_layer: Name of the layer to extract activations from
+        umap_samples: Maximum number of samples to use for UMAP
+        umap_output_dir: Directory to save UMAP visualizations
+    
+    Returns:
+        Tuple of (average_loss, accuracy)
+    """
+
     model.eval()
     total_loss = 0.0
-    correct_predictions = 0
-    total_predictions = 0
-
+    
     # Check if distributed training is initialized
     is_distributed = torch.distributed.is_initialized()
 
     correct_predictions = torch.zeros(n_classes, device=device)
     total_predictions = torch.zeros(n_classes, device=device)
-
+    
+    # UMAP-related setup
+    activations = {}
+    all_activations = []
+    all_labels = []
+    sample_count = 0
+    handle = None
+    
+    if enable_umap:
+        # Find the target layer
+        target_module = None
+        for name, module in model.named_modules():
+            if target_layer in name:
+                target_module = module
+                break
+        
+        if target_module is None:
+            print(f"Warning: Layer {target_layer} not found. UMAP visualization will be skipped.")
+            enable_umap = False
+        else:
+            # Define the hook function
+            def hook_fn(module, input, output):
+                activations[target_layer] = output.detach().cpu().numpy()
+            
+            # Register the hook
+            handle = target_module.register_forward_hook(hook_fn)
+    
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
             inputs, targets, weights = batch[0], batch[1], batch[2]
@@ -199,8 +249,75 @@ def validate_one_epoch(
                         .sum()
                     )
                     total_predictions[i] += valid_targets.sum()
-
+            
+            # Collect activations and labels for UMAP if enabled
+            if enable_umap and target_layer in activations:
+                batch_activations = activations[target_layer]
+                batch_labels = targets.cpu().numpy()
+                
+                all_activations.append(batch_activations)
+                all_labels.append(batch_labels)
+                
+                sample_count += batch_activations.shape[0]
+                if sample_count >= umap_samples:
+                    # We've collected enough samples
+                    break
+    
+    # Remove the hook if it was registered
+    if handle is not None:
+        handle.remove()
+    
     average_loss = total_loss / len(val_loader)
     accuracy = correct_predictions / total_predictions * 100
 
+    # Process collected activations for UMAP if enabled
+    if enable_umap and all_activations:
+        try:
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(umap_output_dir, exist_ok=True)
+            
+            # Concatenate all collected data
+            activations_array = np.vstack(all_activations)
+            labels_array = np.vstack(all_labels)
+            
+            # Reshape if needed - flatten any dimensions beyond the first
+            activations_array = activations_array.reshape(activations_array.shape[0], -1)
+            
+            print(f"Performing UMAP on {activations_array.shape[0]} samples with {activations_array.shape[1]} features")
+            
+            # Standardize the features
+            scaler = StandardScaler()
+            activations_scaled = scaler.fit_transform(activations_array)
+            
+            # Apply UMAP
+            reducer = umap.UMAP(random_state=42)
+            embedding = reducer.fit_transform(activations_scaled)
+            
+            # Plot for each class
+            for i in range(n_classes):
+                plt.figure(figsize=(10, 8))
+                plt.scatter(
+                    embedding[:, 0],
+                    embedding[:, 1],
+                    c=labels_array[:, i],
+                    cmap='viridis',
+                    s=5,
+                    alpha=0.8
+                )
+                plt.colorbar(label=f'Class {i} probability')
+                plt.title(f'UMAP projection of {target_layer} activations (Class {i})')
+                plt.savefig(os.path.join(umap_output_dir, f'umap_class_{i}.png'), dpi=300)
+                plt.close()
+            
+            # Save the embeddings for further analysis
+            np.save(os.path.join(umap_output_dir, 'umap_embeddings.npy'), embedding)
+            np.save(os.path.join(umap_output_dir, 'labels.npy'), labels_array)
+            
+            print(f"UMAP visualizations saved to {umap_output_dir}")
+            
+        except ImportError as e:
+            print(f"UMAP visualization failed: {e}")
+            print("Please install required packages: pip install umap-learn matplotlib scikit-learn")
+    
     return average_loss, accuracy

@@ -14,10 +14,10 @@ sys.path.append(notebook_dir)
 from src.inference.aws_inference import process_jsonl_files
 
 # Defines the path to the project dir and the path to the motif position weight matrix 
-project_path = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
-jaspar_file = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/interpretability/motif.jaspar"  # Update this path
 model = "AR" # Model used
-sample = "22Rv1" # Sample used for predictions 
+sample = "22Rv1" # Sample used for predictions
+project_path = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
+jaspar_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/interpretability/motifs/{model}.jaspar"  # Update this path
 
 # Creating a data frame of the models predictions
 df = pl.read_parquet(project_path + "/data/processed_results/" + model + "_" + sample + "_processed.parquet", columns=["chr_name", "start", "end", "cell_line", "targets", "predicted", "weights", "probabilities", "attributions"])
@@ -118,14 +118,38 @@ def reshape_attributions(df):
 
     # Split into ACGT and ATAC components
     attrs_list = reshaped[..., :4].transpose(0, 2, 1)  # Shape: (n_samples, 4, 4096)
-    atac_list = reshaped[..., 4]  # Shape: (n_samples, 4096)
-            
-    return attrs_list, atac_list
+    #atac_list = reshaped[..., 4]  # Shape: (n_samples, 4096)
+
+    return attrs_list
 
 # Usage:
-attrs_list, atac_list = reshape_attributions(df_positive.to_pandas())
+attrs_list = reshape_attributions(df_positive.to_pandas())
 print(f"Attrs shape: {attrs_list.shape}")
-print(f"ATAC shape: {atac_list.shape}")
+#print(f"ATAC shape: {atac_list.shape}")
+
+
+def reshape_attributions_with_coords(df: pl.DataFrame):
+    attributions = df['attributions'].to_numpy()
+
+    n_samples = len(df)  
+    reshaped = np.empty((n_samples, 4096, 5))
+
+    #attrs_list = reshaped[..., :4].transpose(0, 2, 1)  # Shape: (n_samples, 4, 4096)
+    atac_list = reshaped[..., 4]  # Shape: (n_samples, 4096)
+
+    atac_df = pl.DataFrame({
+        "chr": df["chr"].to_numpy(),
+        "start": df["start"].to_numpy(),
+        "end": df["end"].to_numpy(),
+        "attributions": list(atac_list)  # Store each row of atac_list as a list
+    })
+
+    return atac_df
+
+# Usage:
+atac_df = reshape_attributions_with_coords(df_positive)
+#print(f"Attrs shape: {attrs_list.shape}")
+print(f"ATAC DataFrame: {atac_df}")
 
 
 # Import additional required libraries
@@ -402,3 +426,88 @@ min_seqlet = 5
 receptor_name = model.split("_")[0]
 dir = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/interpretability/output/{model}_{sample}"
 os.system(f"Rscript /data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/interpretability/posthoc.R {min_seqlet} {receptor_name} {dir}")
+
+
+# Pileup function
+# PILEUP PROCESSING
+import pysam
+from pathlib import Path
+import seaborn as sns
+
+pileup_dir = Path("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/22Rv1/pileup_mod/")
+def process_pileups(pileup_dir: Path, chr_name: str, start: int, end: int):
+    context_length = 4_096
+    interval_length = end - start
+    extra_seq = context_length - interval_length
+    extra_left_seq = extra_seq // 2
+    extra_right_seq = extra_seq - extra_left_seq
+
+    start -= extra_left_seq
+    end += extra_right_seq
+
+    # get the pileup file for the given chromosome
+    pileup_file = pileup_dir / f"{chr_name}.pileup.gz"
+
+    assert pileup_file.exists(), f"pileup file for {pileup_file} does not exist"
+
+    tabixfile = pysam.TabixFile(str(pileup_file))
+
+    records = []
+    for rec in tabixfile.fetch(chr_name, start, end):
+        records.append(rec.split("\t"))
+
+    # Convert records to a DataFrame using Polars:
+    df = pl.DataFrame(
+        {
+            "chr_name": [rec[0] for rec in records],
+            "position": [int(rec[1]) for rec in records],
+            "nucleotide": [rec[2] for rec in records],
+            "count": [float(rec[3]) for rec in records],
+        }
+    )
+    
+    return df
+
+# Potting the contribution from the ATAC-seq data
+
+def plot_attribution_with_atac(chr_name, start, end, atac_df, pileup_dir):
+    pileup_df = process_pileups(pileup_dir, chr_name, start, end)
+
+    region_atac = atac_df.filter((pl.col("chr") == chr_name) & (pl.col("start") >= start) & (pl.col("end") <= end))
+
+    #total_attributions = attributions.sum(axis=0)
+
+    figure, ax1 = plt.subplots(figsize=(16, 6))
+
+    
+    sns.barplot(x=pileup_df["position"], y=pileup_df["count"], color="gray", ax=ax1)
+    ax1.set_ylabel("ATAC Pileup Count")
+    ax1.set_xlabel("Genomic Position")
+    ax1.set_title(f"ATAC Pileup and Attributions for {chr_name}:{start}-{end}")
+
+    ax2 = ax1.twinx()
+
+    for row in region_atac.iter_rows(named=True):
+        attributions = row["attributions"]
+        positions = np.arange(row["start"], row["end"])
+        sns.lineplot(x=positions, y=attributions, color="red", ax=ax2, label="Attributions")
+
+    ax2.set_ylabel("Attributions", color="red")
+
+    plt.tight_layout()
+    return figure
+
+# Example usage 
+chr_name = 'chr3'
+start = 131331117
+end = 131337213
+output_dir = Path("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/interpretability/output")
+
+
+
+#print(pileup_dir(pileup_dir))
+figure = plot_attribution_with_atac(chr_name, start, end, atac_df, pileup_dir)
+output_file = output_dir / f"{chr_name}_{start}_{end}_attribution_plot.png"
+figure.savefig(output_file, dpi=300, bbox_inches="tight")
+print(f"Figure saved to {output_file}")
+

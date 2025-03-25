@@ -176,3 +176,8 @@ qsub_scripts*
 *output/*
 
 miniconda3
+
+*.csv
+*.bed
+
+precomputed

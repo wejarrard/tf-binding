@@ -15,6 +15,45 @@ from pyfaidx import Fasta
 from torch.utils.data import DataLoader, Dataset
 from scipy.signal import savgol_coeffs
 
+
+CELL_LINES = [
+    "22Rv1",
+    "LNCAP",
+    "PC-3",
+    "NCI-H660",
+    "C42B",
+    "C4-2",
+    "MCF7",
+    "Ramos",
+    "A549",
+    "HT-1376",
+    "K-562",
+    "JURKAT",
+    "Hep_G2",
+    "MCF_10A",
+    "SCaBER",
+    "SEM",
+    "786-O",
+    "Ishikawa",
+    "MOLT-4",
+    "BJ_hTERT",
+    "SIHA",
+    "Detroit_562",
+    "OVCAR-8",
+    "PANC-1",
+    "NCI-H69",
+    "HELA",
+    "HuH-7",
+    "K-562",
+    "THP-1",
+    "SK-N-SH",
+    "U-87_MG",
+    "RS411",
+    "TC-32",
+    "TTC1240",
+    "VCAP",
+]
+
 class FilterType(Enum):
     NONE = auto()
     GAUSSIAN = auto()
@@ -457,7 +496,7 @@ class GenomeIntervalDataset(Dataset):
 
         # Initialization for GenomeIntervalDataset
         bed_path = Path(bed_file)
-        assert bed_path.exists(), "path to .bed file must exist"
+        assert bed_path.exists(), f"path to .bed file must exist: {bed_path}"
 
         df = pl.read_csv(str(bed_path), separator="\t", has_header=False)
         df = filter_df_fn(df)
@@ -474,11 +513,6 @@ class GenomeIntervalDataset(Dataset):
             shift_augs=shift_augs,
             rc_aug=rc_aug,
         )
-        self.label_folders = sorted(
-            [f.name for f in self.cell_lines_dir.iterdir() if f.is_dir()],
-            key=lambda x: x,
-        )
-        # self.label_folders = ["positive", "negative"]
 
     def one_hot_encode_(self, labels):
         """
@@ -486,10 +520,10 @@ class GenomeIntervalDataset(Dataset):
         """
         labels_list = labels.split(",")
 
-        labels_tensor = torch.zeros(len(self.label_folders))
+        labels_tensor = torch.zeros(len(CELL_LINES))
 
-        for i, folder in enumerate(self.label_folders):
-            if folder in labels_list:
+        for i, cell_line in enumerate(CELL_LINES):
+            if cell_line in labels_list:
                 labels_tensor[i] = 1
         return labels_tensor
 
@@ -507,8 +541,8 @@ class GenomeIntervalDataset(Dataset):
 
         labels_encoded = self.one_hot_encode_(labels)
 
-        # pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
-        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup_mod/"
+        pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup/"
+        # pileup_dir = self.cell_lines_dir / Path(cell_line) / "pileup_mod/"
 
 
         return (
@@ -570,8 +604,10 @@ if __name__ == "__main__":
     cell_lines_dir = "/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
     torch.manual_seed(42)
 
+
+
     dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "data_splits", "combined_peaks.bed"),
+        bed_file=os.path.join("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/utils/combined_peaks.bed"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=cell_lines_dir,
         return_augs=False,

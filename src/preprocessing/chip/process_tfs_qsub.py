@@ -5,9 +5,11 @@ base_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scr
 
 # List of transcription factors
 tf_list = [
-    #"FOXA1", "FOXA2", "NEUROD1", "ASCL1", "RB1", "HOXB13", "E2F1", "E2F2", "CTCF"
+    #"FOXA1",  "NEUROD1", "ASCL1", "RB1", "HOXB13", "E2F1", "E2F2", "CTCF"
+    #"NR3C1", "FOXA2", "SOX2", "ESR1", "JUN", "JUNB", "JUND", "FOSL1", "FOSL2"
     #"E2F2","HNF4G"
-    "ASCL1"
+    "FOS", "FOSB", "MYC","TEAD1", "TEAD4", "TAZ", "ERG", "GATA2", "GATA4", "POU2F1", "REST"
+    # "ASCL1"
     #  "YAP1", "POU5F1"
 ]
 # tf_list = [

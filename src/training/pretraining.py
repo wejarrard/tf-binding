@@ -7,7 +7,7 @@ import boto3
 from sagemaker import Session
 from sagemaker.pytorch import PyTorch
 from tf_finetuning.tf_dataloader import TransformType, FilterType
-import json
+
 def main():
     parser = argparse.ArgumentParser(description='Run TF Binding Site Training Script')
     parser.add_argument('--tf_name', required=True, help='Name of the transcription factor')
@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--s3_bucket', default='tf-binding-sites')
     parser.add_argument('--s3_prefix', default='pretraining/data')
     parser.add_argument('--entry_point', default='tf_prediction.py')
-    parser.add_argument('--instance_type', default='ml.g5.16xlarge')
+    parser.add_argument('--instance_type', default='ml.g5.8xlarge')
     parser.add_argument('--transform_type', default='none')
     parser.add_argument('--filter_type', default='none')
     args = parser.parse_args()
@@ -77,72 +77,30 @@ def main():
     # Upload to S3
     print("Uploading data to S3...")
     sagemaker_session = Session()
-    # print(inputs)
-    # inputs is s3://tf-binding-sites/pretraining/data
-
-    # Read cell line information
-    # cell_line_info_file = "cell_line_info.json"
-    # with open(cell_line_info_file, 'r') as f:
-    #     cell_line_info = json.load(f)
-    # print(cell_line_info)
-
     inputs = sagemaker_session.upload_data(path=local_dir, bucket=args.s3_bucket, key_prefix=args.s3_prefix)
-    
-    # # Define which cell lines you want to include
-    # selected_cell_lines = ["MCF7", "LNCaP"]  # Replace with your actual cell line names
-
-    # # Set up your inputs dictionary
-    # inputs = {}
-
-    # # 1. Add the root level files (first depth)
-    # inputs['root'] = f"s3://{args.s3_bucket}/pretraining/data"
-
-    # # 2. Add the precomputed folder
-    # inputs['precomputed'] = f"s3://{args.s3_bucket}/pretraining/data/precomputed"
-
-    # # 3. Add only specific cell lines
-    # for cell_line in selected_cell_lines:
-    #     inputs[f"cell_line_{cell_line}"] = f"s3://{args.s3_bucket}/pretraining/data/cell_lines/{cell_line}"
-
-    # print(inputs)
 
     # Configure SageMaker training
     print("Setting up SageMaker training job...")
     estimator = PyTorch(
-        base_job_name=f"{validation_identifier}-NO-FLIP",
-        entry_point=args.entry_point,
-        source_dir=os.path.join(args.path_to_project, 'src', 'training', 'tf_finetuning'),
-        output_path=f"s3://{args.s3_bucket}/finetuning/results/output",
-        code_location=f"s3://{args.s3_bucket}/finetuning/results/code",
-        role=args.role,
+        base_job_name="pretraining-unfrozen-transformer",
+        entry_point="pretrain.py",
+        model_dir='/opt/ml/model',
+        source_dir="./pretraining",
+        output_path="s3://tf-binding-sites/pretraining/output",
         py_version="py310",
         framework_version='2.0.0',
-        volume_size=900,
-        instance_count=1,
+        volume_size=800,
         max_run=1209600,
-        instance_type=args.instance_type,
+        instance_count=3,
+        instance_type='ml.g5.12xlarge',
         hyperparameters={
-            'learning-rate': args.learning_rate,
-            'train-file': f'training_combined_{validation_identifier}.csv',
-            'valid-file': f'validation_combined_{validation_identifier}.csv',
-            # 'transform-type': str(transform_type),
-            # 'filter-type': str(filter_type),
-        }
+            'learning-rate': 1e-4
+        },
+        distribution=distribution,
+        sagemaker_session=sagemaker_session
     )
-
-    # set_of_cell_lines = set(cell_line_info['training_cell_lines'] + cell_line_info['validation_cell_lines'])
-
-    # inputs = {
-    #     'precomputed': f"s3://{args.s3_bucket}/{args.s3_prefix}/precomputed",
-    #     'train_data': f"s3://{args.s3_bucket}/{args.s3_prefix}/training_combined_{validation_identifier}.csv",
-    #     'valid_data': f"s3://{args.s3_bucket}/{args.s3_prefix}/validation_combined_{validation_identifier}.csv",
-    #     'genome_fa': f"s3://{args.s3_bucket}/{args.s3_prefix}/genome.fa",
-    #     'genome_fa_fai': f"s3://{args.s3_bucket}/{args.s3_prefix}/genome.fa.fai",
-    # }
-    # for cell_line in set_of_cell_lines:
-    #     inputs[f'cell_line_{cell_line}'] = f"s3://{args.s3_bucket}/{args.s3_prefix}/cell_lines/{cell_line}"
-        
-    estimator.fit(inputs, wait=False)
+    
+    estimator.fit({'training': inputs}, wait=False)
     print("Training job initiated")
 
 if __name__ == '__main__':

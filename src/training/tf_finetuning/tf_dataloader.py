@@ -463,7 +463,16 @@ class TFIntervalDataset(Dataset):
         bed_path = Path(bed_file)
         assert bed_path.exists(), f"path to .bed file must exist, current path: {bed_path}"
 
-        df = pl.read_csv(str(bed_path), separator="\t")
+        print(bed_path)
+    # Specify the schema explicitly - especially for the cell_line column
+        df = pl.read_csv(
+            str(bed_path), 
+            separator="\t",
+            dtypes={
+                "cell_line": pl.Utf8  # Set cell_line as string type
+            },
+            infer_schema_length=10000  # Scan more rows to better infer types
+        )
         df = filter_df_fn(df)
         self.df = df
 

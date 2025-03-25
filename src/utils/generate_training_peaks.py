@@ -426,6 +426,20 @@ def main():
     save_dataset(training_set, training_set_file)
     save_dataset(validation_set, validation_set_file)
 
+    # Extract cell lines used in training and validation
+    training_cell_lines = training_set['cell_line'].unique().tolist()
+    validation_cell_lines = validation_set['cell_line'].unique().tolist()
+    
+    # Save cell line info to a JSON file
+    cell_line_info = {
+        'training_cell_lines': training_cell_lines,
+        'validation_cell_lines': validation_cell_lines
+    }
+    
+    cell_line_info_file = os.path.join(args.output_dir, "cell_line_info.json")
+    with open(cell_line_info_file, 'w') as f:
+        json.dump(cell_line_info, f, indent=2)
+    
     # Log the number of positive and negative hits for each cell line
     for cell_line, group in combined_df.groupby('cell_line'):
         positive_hits = group[group['label'] == POSITIVE_LABEL].shape[0]
@@ -435,6 +449,9 @@ def main():
     logging.info("\n" + "="*50)
     logging.info(f"Training set saved to: {training_set_file}")
     logging.info(f"Validation set saved to: {validation_set_file}")
+    logging.info(f"Cell line information saved to: {cell_line_info_file}")
+    logging.info(f"Training cell lines: {training_cell_lines}")
+    logging.info(f"Validation cell lines: {validation_cell_lines}")
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))

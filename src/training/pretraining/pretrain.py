@@ -17,16 +17,14 @@ from einops.layers.torch import Rearrange
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
-from torch.utils.tensorboard.writer import SummaryWriter
 from training_utils import (
-    count_directories,
-    train_one_epoch,
     transfer_enformer_weights_to_,
+    train_one_epoch,
     validate_one_epoch,
 )
 from transformers import get_linear_schedule_with_warmup
 
-from data import GenomeIntervalDataset
+from data import GenomeIntervalDataset, CELL_LINES
 from deepseq import DeepSeq
 
 seed_value = 42
@@ -108,7 +106,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ MODEL ############
 
-    num_cell_lines = count_directories(os.path.join(data_dir, "cell_lines/"))
+    num_cell_lines = len(CELL_LINES)
 
     model = DeepSeq.from_hparams(
         dim=1536,
@@ -120,18 +118,18 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         num_downsamples=5,
     ).to(device)
 
-    # model = transfer_enformer_weights_to_(model, transformer_only=True)
-    state_dict = torch.load(os.path.join(data_dir,'best_model.pth'), map_location=device)
-    modified_state_dict = {key.replace('_orig_mod.module.', ''): value for key, value in state_dict.items()}
-    model.load_state_dict(modified_state_dict)
+    model = transfer_enformer_weights_to_(model, transformer_only=True)
+    # state_dict = torch.load(os.path.join(data_dir,'best_model.pth'), map_location=device)
+    # modified_state_dict = {key.replace('_orig_mod.module.', ''): value for key, value in state_dict.items()}
+    # model.load_state_dict(modified_state_dict)
 
     for param in model.parameters():
         param.requires_grad = True
 
-    # for name, param in model.named_parameters():
-    #     if "transformer" in name:
-    #         param.requires_grad = False
-    # print("Transformer weights frozen")
+    for name, param in model.named_parameters():
+        if "transformer" in name:
+            param.requires_grad = False
+    print("Transformer weights frozen")
 
     if DISTRIBUTED:
         # https://github.com/dougsouza/pytorch-sync-batchnorm-example
@@ -151,6 +149,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         bed_file=os.path.join(data_dir, "combined.bed"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        # cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
         return_augs=False,
         rc_aug=True,
         shift_augs=(-50, 50),
@@ -263,11 +262,6 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         patience=args.early_stopping_patience, verbose=True, save_path=f"/opt/ml/model/best_model.pth"
     )
 
-    ############ TENSORBOARD ############
-
-    writer = SummaryWriter(
-        log_dir="/opt/ml/output/tensorboard" if torch.cuda.is_available() else "output"
-    )
     ############ TRAINING ############
 
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
@@ -298,10 +292,13 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
             val_loader=valid_loader,
             criterion=criterion,
             device=device,
+            n_classes=len(CELL_LINES),
+            enable_umap=True,
+            umap_output_dir=os.path.join(output_dir, "umap_results"),
         )
         if rank == 0:
             print(
-                f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {train_loss:.4f} | Train acc: {train_acc:.4f} | Val loss: {val_loss:.4f} | Val acc: {val_acc:.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
+                f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {float(train_loss):.4f} | Train acc: {float(train_acc):.4f} | Val loss: {float(val_loss):.4f} | Val acc: {float(val_acc):.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
             )
             if early_stopping(val_loss, model):
                 if DISTRIBUTED:

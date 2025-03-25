@@ -63,13 +63,18 @@ def process_peaks_with_bedtools(cell_lines: List[str], aligned_data_dir: str) ->
         # Step 3: Use bedtools merge to combine overlapping regions and collect cell lines
         output_bed = os.path.join(temp_dir, "output.bed")
         merge_cmd = (f"bedtools merge -i {sorted_bed} "
-                    f"-c 4 -o collapse,distinct "
+                    f"-c 4 -o collapse "
                     f"-delim ',' > {output_bed}")
         subprocess.run(merge_cmd, shell=True, check=True)
 
         # Read the final output
         result = pd.read_csv(output_bed, sep="\t", header=None, names=["chr", "start", "end", "cell_lines"], usecols=[0, 1, 2, 3])
         
+        # remove duplicates from cell_lines, then return it as 
+        result["cell_lines"] = result["cell_lines"].str.split(",").apply(lambda x: ",".join(set(x)))
+
+        print(result.head())
+
         # Process to get source cell line (random one) and all cell lines
         result["source_cell_line"] = result["cell_lines"].str.split(",").apply(lambda x: random.choice(x))
         
