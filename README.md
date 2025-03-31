@@ -1,7 +1,5 @@
 # TF Binding Prediction
 
-This project predicts transcription factor (TF) binding sites using ATAC-seq data. It's structured in three main phases: preprocessing, pretraining, and finetuning.
-
 ## Setup
 
 ### Environment Installation
@@ -68,3 +66,6 @@ To run inference with your finetuned models:
    ```bash
    bash tf_inference.sh --atac_dir /data1/datasets_1/human_prostate_PDX/processed/ATAC_merge/LuCaP_145_1 --models FOXA1,HOXB13 --parallel
    ```
+
+
+   This will output a parquet file in `data/processed_results` which we can use for downstream analysis (some example scripts can be found in `src/inference/analysis`)
