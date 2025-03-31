@@ -47,7 +47,7 @@ To finetune a model for a specific transcription factor:
    python tf_finetuning.py --tf_name AR --cell_line 22Rv1
    ```
 
-This process takes approximately 2 hours. You can monitor progress in SageMaker training at [AWS SageMaker Console](https://016114370410-4y4js2yi.us-west-2.console.aws.amazon.com/sagemaker/home?region=us-west-2#/jobs).
+This process takes anywhere from a couple hours to days depending on the amount of training cell lines. You can monitor progress in SageMaker training at [AWS SageMaker Console](https://016114370410-4y4js2yi.us-west-2.console.aws.amazon.com/sagemaker/home?region=us-west-2#/jobs).
 
 ## Inference
 
