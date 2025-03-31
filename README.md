@@ -13,7 +13,7 @@ conda env create -f environment.yml
 Activate the environment
 
 ```bash
-conda activate processing
+conda activate pterodactyl
 ```
 
 Install the Pterodactyl package:
@@ -39,7 +39,7 @@ To finetune a model for a specific transcription factor:
 
 2. Ensure your conda environment is activated:
    ```bash
-   conda activate processing
+   conda activate pterodactyl
    ```
 
 3. Run the finetuning script with the desired TF and cell line:

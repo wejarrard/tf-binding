@@ -1,4 +1,4 @@
-name: processing
+name: pterodactyl
 channels:
   - bioconda
   - conda-forge
@@ -548,7 +548,6 @@ dependencies:
       - tangermeme==0.4.3
       - tblib==3.0.0
       - tenacity==9.0.0
-      - tf-binding-sites==0.1
       - tokenizers==0.20.1
       - torch==2.5.0
       - torchmetrics==1.5.1
@@ -559,4 +558,3 @@ dependencies:
       - werkzeug==3.0.4
       - widgetsnbextension==4.0.13
       - wrapt==1.16.0
-prefix: /data1/home/wjarrard/miniconda3/envs/processing
