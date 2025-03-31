@@ -3,19 +3,12 @@ import argparse
 import os
 import warnings
 from dataclasses import dataclass
-from multiprocessing import cpu_count
 
-from enformer_pytorch import Enformer
 import pysam
 import torch
 import torch._dynamo
-from torch.cpu import is_available
-import torch.distributed as dist
 import torch.nn as nn
 from earlystopping import EarlyStopping
-from einops.layers.torch import Rearrange
-from torch.cuda.amp.grad_scaler import GradScaler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split
 from training_utils import (
     transfer_enformer_weights_to_,
@@ -23,9 +16,9 @@ from training_utils import (
     validate_one_epoch,
 )
 from transformers import get_linear_schedule_with_warmup
-
 from data import GenomeIntervalDataset, CELL_LINES
 from deepseq import DeepSeq
+from torch.utils.data import default_collate
 
 seed_value = 42
 torch.manual_seed(seed_value)
@@ -38,21 +31,15 @@ torch.autograd.set_detect_anomaly(True)
 warnings.filterwarnings("ignore", category=UserWarning)
 pysam.set_verbosity(0)
 
-sm_hosts_str = os.environ.get("SM_HOSTS", "")
-sm_hosts = sm_hosts_str.split(",")
-
-if len(sm_hosts) > 1:
-    DISTRIBUTED = True
-else:
-    # Use the number of GPUs as a fallback
-    DISTRIBUTED = torch.cuda.device_count() > 1
+# Set distributed flag to False to disable multiprocessing
+DISTRIBUTED = False
 
 
 ############ HYPERPARAMETERS ############
 @dataclass
 class HyperParams:
     num_epochs: int = 50
-    batch_size: int = 8 if torch.cuda.is_available() else 1
+    batch_size: int = 8 if torch.cuda.is_available() else 4
 
     learning_rate: float = 5e-4
     early_stopping_patience: int = 2
@@ -76,6 +63,26 @@ def get_params_without_weight_decay_ln(named_params, weight_decay):
     ]
     return optimizer_grouped_parameters
 
+def skip_inconsistent_dims_collate(batch):
+    """
+    Custom collate function that skips batches with inconsistent dimensions.
+    
+    If tensors in the batch have inconsistent dimensions, return None
+    which will be handled in the training loop.
+    """
+    try:
+        # Try the default collation
+        return default_collate(batch)
+    except RuntimeError as e:
+        # Check if the error is due to inconsistent tensor sizes
+        if "stack expects each tensor to be equal size" in str(e):
+            print(f"Skipping batch with inconsistent dimensions: {str(e)}")
+            # Return None to indicate this batch should be skipped
+            return None
+        else:
+            # Re-raise other runtime errors
+            raise e
+
 
 def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
     ############ DEVICE ############
@@ -85,12 +92,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
         device = torch.device("cpu")
         gpu_ok = False
     else:
-        if DISTRIBUTED:
-            dist.init_process_group(backend="nccl")
-            torch.cuda.set_device(args.local_rank)
-            device = torch.device(f"cuda:{args.local_rank}")
-        else:
-            device = torch.device("cuda")
+        device = torch.device("cuda")
 
         # Checking GPU compatibility
         gpu_ok = torch.cuda.get_device_capability() in (
@@ -131,52 +133,49 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
             param.requires_grad = False
     print("Transformer weights frozen")
 
-    if DISTRIBUTED:
-        # https://github.com/dougsouza/pytorch-sync-batchnorm-example
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = model.to(device)
-        model = DDP(model)
-
-    else:
-        model.to(device)
+    model.to(device)
 
     # model = torch.compile(model) if gpu_ok else model
-    model = torch.compile(model) if torch.cuda.is_available() else model
+    # model = torch.compile(model) if torch.cuda.is_available() else model
 
     ############ DATA ############
 
-    dataset = GenomeIntervalDataset(
-        bed_file=os.path.join(data_dir, "combined.bed"),
+    # Create separate datasets for training and validation using different bed files
+    train_dataset = GenomeIntervalDataset(
+        # bed_file=os.path.join(data_dir, "train.bed"),
+        bed_file=os.path.join(data_dir, "valid.bed"),
         fasta_file=os.path.join(data_dir, "genome.fa"),
-        cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
-        # cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
+        cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
+        # cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
         return_augs=False,
-        rc_aug=True,
-        shift_augs=(-50, 50),
+        shift_augs=(0, 0),
         context_length=16_384,
     )
-
-    if torch.cuda.is_available():
-        total_size = len(dataset)
-        valid_size = 20_000
-        train_size = total_size - valid_size
-
-        train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
-    else:
-        # Create a subset of 100 samples from the dataset
-        subset_size = 2
-        subset_indices = torch.randperm(len(dataset))[:subset_size].tolist()
-        subset_dataset = torch.utils.data.Subset(dataset, subset_indices)
-        # Divide the subset into training and validation
-        valid_size = 1  # Set your validation size
-        train_size = subset_size - valid_size
-        train_dataset, valid_dataset = random_split(
-            subset_dataset, [train_size, valid_size]
-        )
-
-    assert (
-        train_size > 0
-    ), f"The dataset only contains {total_size} samples, but {valid_size} samples are required for the validation set."
+    
+    valid_dataset = GenomeIntervalDataset(
+        bed_file=os.path.join(data_dir, "valid.bed"),
+        fasta_file=os.path.join(data_dir, "genome.fa"),
+        cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
+        # cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        return_augs=False,
+        shift_augs=(0, 0),
+        context_length=16_384,
+    )
+    
+    # For CPU testing with smaller datasets
+    if not torch.cuda.is_available():
+        # Create small subsets for CPU testing
+        train_subset_size = 10
+        valid_subset_size = 10
+        
+        train_subset_indices = torch.randperm(len(train_dataset))[:train_subset_size].tolist()
+        valid_subset_indices = torch.randperm(len(valid_dataset))[:valid_subset_size].tolist()
+        
+        train_dataset = torch.utils.data.Subset(train_dataset, train_subset_indices)
+        valid_dataset = torch.utils.data.Subset(valid_dataset, train_subset_indices)
+    
+    print(f"Training dataset size: {len(train_dataset)}")
+    print(f"Validation dataset size: {len(valid_dataset)}")
 
     if torch.cuda.device_count() >= 1:
         num_workers = 6
@@ -185,55 +184,25 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     print(f"Using {num_workers} workers")
 
-    if DISTRIBUTED:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=args.local_rank,
-            drop_last=True    
-        )
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=train_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=skip_inconsistent_dims_collate  # Add this line
+    )
 
-        valid_sampler = torch.utils.data.distributed.DistributedSampler(
-            valid_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=dist.get_rank(),
-            shuffle=False,
-            drop_last=True
-        )
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            sampler=valid_sampler,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
-    else:
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
-
-        valid_loader = DataLoader(
-            valid_dataset,
-            batch_size=hyperparams.batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True
-        )
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=hyperparams.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=skip_inconsistent_dims_collate  # Add this line
+    )
 
     ############ TRAINING PARAMS ############
 
@@ -264,14 +233,7 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
 
     ############ TRAINING ############
 
-    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-
     for epoch in range(hyperparams.num_epochs):
-        if DISTRIBUTED:
-            train_sampler.set_epoch(epoch)
-            valid_sampler.set_epoch(epoch)
-            
-
         train_loss, train_acc = train_one_epoch(
             model=model,
             optimizer=optimizer,
@@ -281,11 +243,9 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
             scheduler=scheduler,
             train_loader=train_loader,
         )
-        if rank == 0:
-            if torch.isnan(torch.tensor(train_loss)):
-                if DISTRIBUTED:
-                    torch.distributed.destroy_process_group()
-                break
+        
+        if torch.isnan(torch.tensor(train_loss)):
+            break
 
         val_loss, val_acc = validate_one_epoch(
             model=model,
@@ -295,15 +255,15 @@ def main(output_dir: str, data_dir: str, hyperparams: HyperParams) -> None:
             n_classes=len(CELL_LINES),
             enable_umap=True,
             umap_output_dir=os.path.join(output_dir, "umap_results"),
+            umap_samples=10_000,
         )
-        if rank == 0:
-            print(
-                f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {float(train_loss):.4f} | Train acc: {float(train_acc):.4f} | Val loss: {float(val_loss):.4f} | Val acc: {float(val_acc):.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
-            )
-            if early_stopping(val_loss, model):
-                if DISTRIBUTED:
-                    torch.distributed.destroy_process_group()
-                break
+        
+        print(
+            f"Epoch: {epoch + 1}/{hyperparams.num_epochs} | Train loss: {float(train_loss):.4f} | Train acc: {float(train_acc):.4f} | Val loss: {float(val_loss):.4f} | Val acc: {float(val_acc):.4f} | LR: {scheduler.get_last_lr()[0]:.4f}"
+        )
+        
+        if early_stopping(val_loss, model):
+            break
 
 
 if __name__ == "__main__":
@@ -331,9 +291,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--focal-loss-gamma", type=float, default=HyperParams.focal_loss_gamma
-    )
-    parser.add_argument(
-        "--local_rank", type=int, default=int(os.environ.get("LOCAL_RANK", 0))
     )
 
     args = parser.parse_args()

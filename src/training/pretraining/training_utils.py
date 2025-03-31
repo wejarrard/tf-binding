@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 import umap
 from sklearn.preprocessing import StandardScaler
 
+from data import CELL_LINES
+
 
 def count_directories(path: str) -> int:
     # Check if path exists and is a directory
@@ -88,7 +90,13 @@ def train_one_epoch(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     for batch_idx, batch in enumerate(train_loader):
+
+        if batch is None:
+            continue
+
         inputs, targets, weights = batch[0], batch[1], batch[2]
+
+        print(inputs.shape, targets.shape, weights.shape)
 
         inputs, targets, weights = (
             inputs.to(device),
@@ -140,7 +148,7 @@ def train_one_epoch(
 
         if rank == 0:
 
-            if batch_idx % 1000 == 0:
+            if batch_idx % 1_000 == 0:
                 print(
                     f"Progress: {batch_idx}/{len(train_loader)} | Train Loss: {total_loss / (batch_idx + 1)} | LR: {scheduler.get_last_lr()[0]:.8f}"
                 )
@@ -150,26 +158,27 @@ def train_one_epoch(
 
     return average_loss, accuracy
 
+
 def validate_one_epoch(
     model,
     criterion: nn.Module,
     device: torch.device,
     val_loader: DataLoader,
-    n_classes=1,
+    n_classes=len(CELL_LINES),
     enable_umap=False,
     target_layer='linear_512',
     umap_samples=500,
     umap_output_dir='umap_results'
 ):
     """
-    Validates one epoch and optionally performs UMAP visualization on intermediate activations.
+    Validates one epoch and performs UMAP visualization of cell lines in latent space.
     
     Args:
         model: The neural network model
         criterion: Loss function
         device: Device to run validation on
         val_loader: DataLoader for validation data
-        n_classes: Number of output classes
+        n_classes: Number of output classes (cell lines)
         enable_umap: Whether to perform UMAP visualization
         target_layer: Name of the layer to extract activations from
         umap_samples: Maximum number of samples to use for UMAP
@@ -184,45 +193,66 @@ def validate_one_epoch(
     
     # Check if distributed training is initialized
     is_distributed = torch.distributed.is_initialized()
+    rank = torch.distributed.get_rank() if is_distributed else 0
 
     correct_predictions = torch.zeros(n_classes, device=device)
     total_predictions = torch.zeros(n_classes, device=device)
     
     # UMAP-related setup
-    activations = {}
     all_activations = []
     all_labels = []
     sample_count = 0
-    handle = None
+    activation = {}  # Dictionary to store activations
     
-    if enable_umap:
-        # Find the target layer
-        target_module = None
-        for name, module in model.named_modules():
-            if target_layer in name:
-                target_module = module
-                break
+    if enable_umap and rank == 0:
+        # Create output directory if it doesn't exist
+        os.makedirs(umap_output_dir, exist_ok=True)
         
-        if target_module is None:
+        # Define the hook function to capture activations
+        def get_activation(name):
+            def hook(model, input, output):
+                activation[name] = output.detach().cpu()
+            return hook
+        
+        # Find and register the hook based on target_layer
+        hook_handle = None
+        if target_layer == 'linear_512':
+            # Assuming model.out[1] is the linear_512 layer
+            try:
+                hook_handle = model.out[1].register_forward_hook(get_activation(target_layer))
+                print(f"Hook registered for layer: {target_layer}")
+            except (AttributeError, IndexError) as e:
+                print(f"Failed to register hook for {target_layer}: {e}")
+                print("Attempting to find layer by iterating through model...")
+                
+                # Try to find the target layer by iterating
+                for name, module in model.named_modules():
+                    if target_layer in name or (hasattr(module, 'out_features') and 
+                                              isinstance(module, nn.Linear) and 
+                                              module.out_features == 512):
+                        hook_handle = module.register_forward_hook(get_activation(target_layer))
+                        print(f"Found and hooked layer: {name}")
+                        break
+        else:
+            # Try to find the target layer by name
+            for name, module in model.named_modules():
+                if target_layer in name:
+                    hook_handle = module.register_forward_hook(get_activation(target_layer))
+                    print(f"Hook registered for layer: {name}")
+                    break
+        
+        if hook_handle is None:
             print(f"Warning: Layer {target_layer} not found. UMAP visualization will be skipped.")
             enable_umap = False
-        else:
-            # Define the hook function
-            def hook_fn(module, input, output):
-                activations[target_layer] = output.detach().cpu().numpy()
-            
-            # Register the hook
-            handle = target_module.register_forward_hook(hook_fn)
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(val_loader):
-            inputs, targets, weights = batch[0], batch[1], batch[2]
 
-            inputs, targets, weights = (
-                inputs.to(device),
-                targets.to(device),
-                weights.to(device),
-            )
+            if batch is None:
+                continue
+
+            inputs, targets, weights = batch[0], batch[1], batch[2]
+            inputs, targets, weights = inputs.to(device), targets.to(device), weights.to(device)
 
             outputs = model(inputs)
             loss = F.binary_cross_entropy_with_logits(outputs, targets, weight=weights)
@@ -251,8 +281,8 @@ def validate_one_epoch(
                     total_predictions[i] += valid_targets.sum()
             
             # Collect activations and labels for UMAP if enabled
-            if enable_umap and target_layer in activations:
-                batch_activations = activations[target_layer]
+            if enable_umap and target_layer in activation and rank == 0:
+                batch_activations = activation[target_layer].numpy()
                 batch_labels = targets.cpu().numpy()
                 
                 all_activations.append(batch_activations)
@@ -264,19 +294,20 @@ def validate_one_epoch(
                     break
     
     # Remove the hook if it was registered
-    if handle is not None:
-        handle.remove()
+    if enable_umap and rank == 0 and hook_handle is not None:
+        hook_handle.remove()
     
+    # Calculate average loss and accuracy
     average_loss = total_loss / len(val_loader)
-    accuracy = correct_predictions / total_predictions * 100
-
+    
+    # Handle the case where some classes have no predictions
+    accuracy = torch.zeros_like(correct_predictions)
+    valid_classes = total_predictions > 0
+    accuracy[valid_classes] = correct_predictions[valid_classes] / total_predictions[valid_classes] * 100
+    
     # Process collected activations for UMAP if enabled
-    if enable_umap and all_activations:
+    if enable_umap and all_activations and rank == 0:
         try:
-            
-            # Create output directory if it doesn't exist
-            os.makedirs(umap_output_dir, exist_ok=True)
-            
             # Concatenate all collected data
             activations_array = np.vstack(all_activations)
             labels_array = np.vstack(all_labels)
@@ -291,33 +322,109 @@ def validate_one_epoch(
             activations_scaled = scaler.fit_transform(activations_array)
             
             # Apply UMAP
-            reducer = umap.UMAP(random_state=42)
+            reducer = umap.UMAP(n_neighbors=30, min_dist=0.1, n_components=2, random_state=42)
             embedding = reducer.fit_transform(activations_scaled)
-            
-            # Plot for each class
-            for i in range(n_classes):
-                plt.figure(figsize=(10, 8))
-                plt.scatter(
-                    embedding[:, 0],
-                    embedding[:, 1],
-                    c=labels_array[:, i],
-                    cmap='viridis',
-                    s=5,
-                    alpha=0.8
-                )
-                plt.colorbar(label=f'Class {i} probability')
-                plt.title(f'UMAP projection of {target_layer} activations (Class {i})')
-                plt.savefig(os.path.join(umap_output_dir, f'umap_class_{i}.png'), dpi=300)
-                plt.close()
             
             # Save the embeddings for further analysis
             np.save(os.path.join(umap_output_dir, 'umap_embeddings.npy'), embedding)
             np.save(os.path.join(umap_output_dir, 'labels.npy'), labels_array)
             
+            # Plot cell lines in the same UMAP space with different colors
+            plt.figure(figsize=(12, 10))
+            
+            # Create a custom colormap for the cell lines
+            # Minimum alpha threshold for visibility
+            min_alpha = 0.5
+            
+            # Generate a color for each cell line
+            colors = plt.cm.tab20(np.linspace(0, 1, len(CELL_LINES)))
+            
+            # Create a dictionary to keep track of class representations
+            class_counts = {i: 0 for i in range(n_classes)}
+            
+            # Dominant class approach - assign each point to the cell line with highest probability
+            dominant_classes = np.argmax(labels_array, axis=1)
+            
+            # Plot each point, colored by its dominant cell line
+            scatter = plt.scatter(embedding[:, 0], embedding[:, 1], 
+                        c=dominant_classes, 
+                        cmap=ListedColormap(colors),
+                        s=15, alpha=0.8)
+            
+            # Create a legend
+            legend_patches = []
+            for i, cell_line in enumerate(CELL_LINES):
+                # Only include cell lines that have some representation
+                if np.any(dominant_classes == i):
+                    class_counts[i] = np.sum(dominant_classes == i)
+                    legend_patches.append(mpatches.Patch(
+                        color=colors[i], 
+                        label=f'{cell_line} (n={class_counts[i]})'
+                    ))
+            
+            plt.legend(handles=legend_patches, loc='upper right', 
+                      bbox_to_anchor=(1.15, 1), title="Cell Lines")
+            
+            plt.title('UMAP projection of cell lines in latent space', fontsize=16)
+            plt.tight_layout()
+            plt.savefig(os.path.join(umap_output_dir, 'umap_cell_lines.png'), dpi=300, bbox_inches='tight')
+            
+            # Create an alternative visualization showing class probabilities
+            plt.figure(figsize=(20, 16))
+            
+            # Create subplots for each cell line
+            rows = int(np.ceil(n_classes / 4))
+            fig, axes = plt.subplots(rows, 4, figsize=(20, 4 * rows))
+            axes = axes.flatten()
+            
+            for i, cell_line in enumerate(CELL_LINES):
+                if i < len(axes):  # Ensure we don't exceed the number of subplots
+                    ax = axes[i]
+                    
+                    # Plot the probability for this cell line
+                    scatter = ax.scatter(
+                        embedding[:, 0], embedding[:, 1],
+                        c=labels_array[:, i],
+                        cmap='viridis',
+                        s=10, alpha=0.7
+                    )
+                    
+                    ax.set_title(f'{cell_line} (n={class_counts.get(i, 0)})')
+                    fig.colorbar(scatter, ax=ax, label='Probability')
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+            
+            # Hide any unused subplots
+            for i in range(n_classes, len(axes)):
+                axes[i].axis('off')
+                
+            plt.tight_layout()
+            plt.savefig(os.path.join(umap_output_dir, 'umap_cell_lines_probability.png'), 
+                        dpi=300, bbox_inches='tight')
+            
+            # Create a heatmap of cell line correlation in the latent space
+            plt.figure(figsize=(14, 12))
+            
+            # Calculate correlation between cell lines
+            correlation_matrix = np.corrcoef(labels_array.T)
+            
+            # Plot correlation heatmap
+            plt.imshow(correlation_matrix, cmap='coolwarm', vmin=-1, vmax=1)
+            plt.colorbar(label='Correlation')
+            plt.title('Correlation between cell lines in latent space', fontsize=16)
+            
+            # Add cell line labels
+            plt.xticks(range(len(CELL_LINES)), CELL_LINES, rotation=90)
+            plt.yticks(range(len(CELL_LINES)), CELL_LINES)
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(umap_output_dir, 'cell_line_correlation.png'), 
+                       dpi=300, bbox_inches='tight')
+            
             print(f"UMAP visualizations saved to {umap_output_dir}")
             
-        except ImportError as e:
+        except Exception as e:
             print(f"UMAP visualization failed: {e}")
-            print("Please install required packages: pip install umap-learn matplotlib scikit-learn")
+            print("Make sure required packages are installed: pip install umap-learn matplotlib scikit-learn")
     
-    return average_loss, accuracy
+    return average_loss, accuracy.mean().item()

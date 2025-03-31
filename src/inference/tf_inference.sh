@@ -8,15 +8,15 @@ MODEL_JSON_PATH="${PROJECT_PATH}/src/inference/models.json"
 
 # Function to print usage
 print_usage() {
-    echo "Usage: $0 --atac_dir <atac_directory> --models <model1,model2,...> [--parallel <true|false>]"
+    echo "Usage: $0 --atac_dir <atac_directory> --models <model1,model2,...> [--parallel]"
     echo
     echo "Options:"
     echo "  --atac_dir   Directory containing ATAC data or cell line identifier"
     echo "  --models     Comma-separated list of models to run (specified in models.json)"
-    echo "  --parallel   Optional: Run in parallel (true) or sequentially (false). Default: false"
+    echo "  --parallel   Optional: Run in parallel mode"
     echo
     echo "Example:"
-    echo "  $0 --atac_dir /data1/datasets_1/human_prostate_PDX/processed/ATAC/LuCaP_145_1:SRR12455430 --models FOXA1,FOXA2 --parallel true"
+    echo "  $0 --atac_dir /data1/datasets_1/human_prostate_PDX/processed/ATAC/LuCaP_145_1:SRR12455430 --models FOXA1,FOXA2 --parallel"
 }
 
 # Process a single combination of model and cell line
@@ -74,7 +74,8 @@ process_combination() {
     
     # Get input bed file path
     local bed_path
-    if [[ "$cell_line" =~ ^LuCaP ]]; then
+    echo "cell_line: ${cell_line} srr_value: ${srr_value}"
+    if [[ "$cell_line" == LuCaP* ]]; then
         bed_path="/data1/datasets_1/human_prostate_PDX/processed/ATAC/${cell_line}/${srr_value}/peaks/${srr_value}.filtered.broadPeak"
     elif [[ ! "$cell_line" =~ / ]]; then
         bed_path="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/${cell_line}/peaks/${cell_line}.filtered.broadPeak"
@@ -98,7 +99,9 @@ process_combination() {
         --output_dir "${PROJECT_PATH}/data/data_splits" \
         --output_file "${input_file}.csv" 2>&1 | tee -a "$log_file"
     
+    
     # Prepare data
+    echo "Preparing data for ${cell_line} - ${model}..."
     local cell_line_dir
     if [[ "$cell_line" =~ ^LuCaP ]]; then
         cell_line_dir="/data1/datasets_1/human_prostate_PDX/processed/ATAC/${cell_line}"
@@ -110,6 +113,10 @@ process_combination() {
         # cell line is everything after the last slash
         cell_line="${cell_line##*/}"
     fi
+
+    echo "cell_line_dir: ${cell_line_dir}"
+
+    echo "cell_line: ${cell_line}"
     
     #########################
     # Prepare data using qsub
@@ -124,15 +131,15 @@ process_combination() {
 
 source ~/.bashrc
 
-source activate processing
+conda activate processing
 
 python "${PROJECT_PATH}/src/inference/prepare_data.py" \
     --input_file "${input_file}.csv" \
     --output_path "${PROJECT_PATH}/data/jsonl/${input_file}" \
     --cell_line_dir "${cell_line_dir}"
+
 EOF
 
-    chmod +x "${qsub_script}"
     local job_id=$(qsub "${qsub_script}" | cut -d' ' -f3)
     
     # Wait for the job to complete
@@ -151,6 +158,18 @@ EOF
         --model_paths_file "${MODEL_JSON_PATH}" \
         --project_path "${PROJECT_PATH}" \
         --local_dir "${PROJECT_PATH}/data/jsonl/${input_file}" 2>&1 | tee -a "$log_file"
+    
+    # Set permissions for all files created by aws_inference.py
+    # These files would be in specific output directories based on aws_inference.py's behavior
+    
+    # Also set permissions for any potential output files from inference
+    # (This is an assumption - add specific paths if you know exactly where aws_inference.py stores results)
+    local output_dirs=(
+        "${PROJECT_PATH}/results/${cell_line}_${model}"
+        "${PROJECT_PATH}/output/${cell_line}_${model}"
+        "${PROJECT_PATH}/predictions/${cell_line}_${model}"
+    )
+
 }
 
 main() {
@@ -170,8 +189,16 @@ main() {
                 shift 2
                 ;;
             --parallel)
-                run_parallel="$2"
-                shift 2
+                run_parallel="true"
+                # Check if the next argument is a flag (starts with --)
+                if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
+                    # If explicitly set to false, respect that
+                    if [[ "$2" == "false" ]]; then
+                        run_parallel="false"
+                    fi
+                    shift
+                fi
+                shift
                 ;;
             --help)
                 print_usage
@@ -204,22 +231,23 @@ main() {
         exit 1
     fi
     
-    source activate processing 2>/dev/null
+    conda activate processing 2>/dev/null
+
     
     # Parse cell lines from atac_dir
     local cell_lines=()
     
-    # Check if atac_dir is a directory or a comma-separated list
-    if [[ -d "$atac_dir" ]]; then
-        # If it's a directory, get all subdirectories
-        for dir in "$atac_dir"/*; do
-            if [[ -d "$dir" ]]; then
-                cell_lines+=("$(basename "$dir")")
-            fi
-        done
-    else
+    if [[ "$atac_dir" == *","* ]]; then
         # If it's not a directory, treat it as a comma-separated list
         IFS=',' read -ra cell_lines <<< "$atac_dir"
+        
+        # Ensure we're properly handling comma-separated input that might include SRR values
+        # This prevents issues if a cell line entry contains a colon
+        for i in "${!cell_lines[@]}"; do
+            cell_lines[$i]=$(echo "${cell_lines[$i]}" | xargs)  # Trim whitespace
+        done
+    else
+        cell_lines=("$atac_dir")
     fi
     
     # Parse models
