@@ -131,7 +131,7 @@ process_combination() {
 
 source ~/.bashrc
 
-conda activate processing
+conda activate pterodactyl
 
 python "${PROJECT_PATH}/src/inference/prepare_data.py" \
     --input_file "${input_file}.csv" \
@@ -158,17 +158,6 @@ EOF
         --model_paths_file "${MODEL_JSON_PATH}" \
         --project_path "${PROJECT_PATH}" \
         --local_dir "${PROJECT_PATH}/data/jsonl/${input_file}" 2>&1 | tee -a "$log_file"
-    
-    # Set permissions for all files created by aws_inference.py
-    # These files would be in specific output directories based on aws_inference.py's behavior
-    
-    # Also set permissions for any potential output files from inference
-    # (This is an assumption - add specific paths if you know exactly where aws_inference.py stores results)
-    local output_dirs=(
-        "${PROJECT_PATH}/results/${cell_line}_${model}"
-        "${PROJECT_PATH}/output/${cell_line}_${model}"
-        "${PROJECT_PATH}/predictions/${cell_line}_${model}"
-    )
 
 }
 
@@ -231,7 +220,6 @@ main() {
         exit 1
     fi
     
-    conda activate processing 2>/dev/null
 
     
     # Parse cell lines from atac_dir

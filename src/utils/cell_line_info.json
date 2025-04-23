@@ -1,0 +1,15 @@
+{
+  "training_cell_lines": [
+    "22Rv1",
+    "A549",
+    "AN3_CA",
+    "HELA",
+    "Hep_G2",
+    "Ishikawa",
+    "K-562",
+    "MCF7",
+    "MDA-MB-231",
+    "SK-N-SH"
+  ],
+  "validation_cell_lines": []
+}

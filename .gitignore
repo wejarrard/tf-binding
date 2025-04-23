@@ -181,3 +181,5 @@ miniconda3
 *.bed
 
 precomputed
+
+maxatac

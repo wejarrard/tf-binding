@@ -71,8 +71,8 @@ def save_and_process_results(
     
 def main():
     project_path = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
-    model = "AR"
-    sample = "LuCaP_78"
+    model = "ERG-CellLine"
+    sample = "VCAP"
     save_and_process_results(project_path, model, sample)
 
 if __name__ == "__main__":

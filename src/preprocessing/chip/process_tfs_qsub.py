@@ -11,7 +11,8 @@ tf_list = [
     #"FOSB", "MYC","TEAD1", "TEAD4", "TAZ", "ERG", "GATA2", "GATA4", "POU2F1", "REST"
     # "ASCL1"
     #  "YAP1", "POU5F1"
-     "NFKB", "YY1", "ONECUT2", "ARNTL"
+    #  "NFKB", "YY1", "ONECUT2", "ARNTL"
+    "MAX"
 ]
 # tf_list = [
 #     'ASCL1', 'FOXA1', 'NR3C1', 'HDAC3', 'HOXB13', 'HDAC1', 'TP53', 'TRIM24', 'LEO1', 'SMARCA5', 'INO80', 'SMARCA4', 

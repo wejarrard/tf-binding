@@ -64,6 +64,18 @@ logging.basicConfig(
 def validate_file_exists(path: str) -> bool:
     return os.path.exists(path)
 
+def validate_file_not_empty(path: str) -> bool:
+    """
+    Checks if a file exists and is not empty.
+    
+    Args:
+        path: Path to the file to check
+        
+    Returns:
+        True if the file exists and is not empty, False otherwise
+    """
+    return os.path.exists(path) and os.path.getsize(path) > 0
+
 def filter_by_chromosomes(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["chr"].isin(VALID_CHROMOSOMES)]
 
@@ -206,7 +218,7 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
     # Only keep mappings for cell lines that have chip files and ATAC files
     filtered_cell_lines = {
         k: v for k, v in cell_lines.items() 
-        if k in present_cell_lines and validate_file_exists(
+        if k in present_cell_lines and validate_file_not_empty(
             os.path.join(args.aligned_chip_data_dir, v, "peaks", f"{v}.filtered.broadPeak")
         )
     }
@@ -223,7 +235,11 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
             if not filename.endswith(".bed"):
                 continue
             if filename.split("_")[0] == cell_line_key:
-                chip_files.append(os.path.join(chip_input_dir, filename))
+                chip_file_path = os.path.join(chip_input_dir, filename)
+                if validate_file_not_empty(chip_file_path):
+                    chip_files.append(chip_file_path)
+                else:
+                    logging.warning(f"Skipping empty ChIP file: {chip_file_path}")
 
         if chip_files:
             chip_dfs = []
@@ -231,18 +247,27 @@ def process_atac_files(chip_input_dir: str, cell_lines: dict, args) -> list:
                 chip_df = pd.read_csv(file, sep="\t", header=None, names=["chr", "start", "end", "count"])
                 chip_df = filter_by_peak_length(chip_df)
                 chip_df = filter_by_chromosomes(chip_df)
-                chip_dfs.append(chip_df)
+                if not chip_df.empty:
+                    chip_dfs.append(chip_df)
+                else:
+                    logging.warning(f"Empty dataframe after filtering for file: {file}")
             if chip_dfs:
                 chip_df_combined = pd.concat(chip_dfs, ignore_index=True)
                 chip_df_combined = drop_duplicates_and_sort(chip_df_combined)
-                atac_positive = intersect_bed_files(atac_df, chip_df_combined)
-                atac_positive = label_positive_peaks(atac_positive)
-                atac_negative = subtract_bed_files(atac_df, chip_df_combined)
-                atac_negative = assign_negative_label(atac_negative)
-                atac_positive["cell_line"] = cell_line
-                atac_negative["cell_line"] = cell_line
-                processed_dfs.append(atac_positive)
-                processed_dfs.append(atac_negative)
+                if not chip_df_combined.empty and not atac_df.empty:
+                    atac_positive = intersect_bed_files(atac_df, chip_df_combined)
+                    atac_positive = label_positive_peaks(atac_positive)
+                    atac_negative = subtract_bed_files(atac_df, chip_df_combined)
+                    atac_negative = assign_negative_label(atac_negative)
+                    atac_positive["cell_line"] = cell_line
+                    atac_negative["cell_line"] = cell_line
+                    processed_dfs.append(atac_positive)
+                    processed_dfs.append(atac_negative)
+                else:
+                    logging.warning(f"Empty combined dataframe for {cell_line_key} after processing")
+                    atac_df = assign_negative_label(atac_df)
+                    atac_df["cell_line"] = cell_line
+                    processed_dfs.append(atac_df)
             else:
                 logging.warning(f"No valid chip peaks found for {cell_line_key}")
                 atac_df = assign_negative_label(atac_df)
@@ -292,17 +317,20 @@ def check_cell_lines_in_chip(chip_input_dir: str, cell_lines: dict, args) -> Non
                 args.aligned_chip_data_dir, cell_lines[cell_line], "peaks", 
                 f"{cell_lines[cell_line]}.filtered.broadPeak"
             )
-            if validate_file_exists(atac_path):
+            if validate_file_not_empty(atac_path):
                 status = "✓ Will be used"
             else:
-                status = "✗ Skipped (ATAC file not found in provided aligned_chip_data_dir)"
+                if validate_file_exists(atac_path):
+                    status = "✗ Skipped (ATAC file exists but is empty in provided aligned_chip_data_dir)"
+                else:
+                    status = "✗ Skipped (ATAC file not found in provided aligned_chip_data_dir)"
         else:
             status = "✗ Skipped (not in cell_line_mapping.json)"
         logging.info(f"  - {cell_line}: {status}")
     
     usable_cell_lines = {
         cell_line for cell_line in chip_cell_lines & set(cell_lines.keys())
-        if validate_file_exists(os.path.join(
+        if validate_file_not_empty(os.path.join(
             args.aligned_chip_data_dir, cell_lines[cell_line], "peaks", 
             f"{cell_lines[cell_line]}.filtered.broadPeak"
         ))

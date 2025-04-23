@@ -8,12 +8,14 @@ from sagemaker import Session
 from sagemaker.pytorch import PyTorch
 from tf_finetuning.tf_dataloader import TransformType, FilterType
 import json
+
 def main():
     parser = argparse.ArgumentParser(description='Run TF Binding Site Training Script')
     parser.add_argument('--tf_name', required=True, help='Name of the transcription factor')
     
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--cell_line', type=str, help='Name of the cell line for validation set')
+    # Modified to accept multiple cell lines
+    group.add_argument('--cell_lines', type=str, nargs='+', help='Names of cell lines for validation set (space-separated)')
     group.add_argument('--chr', type=str, help='Chromosome(s) for validation set (space-separated)')
     group.add_argument('--random', action='store_true', help='randomly select 15% of the data for validation set')
     
@@ -37,8 +39,9 @@ def main():
         '--balance'
     ]
 
-    if args.cell_line:
-        command.extend(['--validation_cell_lines', args.cell_line])
+    if args.cell_lines:
+        # Pass all cell lines to the validation_cell_lines parameter
+        command.extend(['--validation_cell_lines'] + args.cell_lines)
     elif args.chr:
         command.extend(['--validation_chromosomes'] + args.chr.split())
     elif args.random:
@@ -54,7 +57,15 @@ def main():
 
     # Rename files
     local_dir = os.path.join(args.path_to_project, 'data', 'data_splits')
-    validation_identifier = args.tf_name + '-' + (args.cell_line if args.cell_line else args.chr if args.chr else 'random')
+    
+    # Create identifier with multiple cell lines
+    if args.cell_lines:
+        # Join multiple cell lines with a dash or another delimiter
+        cell_lines_str = "-".join(args.cell_lines)
+        validation_identifier = f"{args.tf_name}-{cell_lines_str}"
+    else:
+        validation_identifier = f"{args.tf_name}-{args.chr if args.chr else 'random'}"
+        
     for file_type in ['training', 'validation']:
         old_name = os.path.join(local_dir, f'{file_type}_combined.csv')
         new_name = os.path.join(local_dir, f'{file_type}_combined_{validation_identifier}.csv')
@@ -66,46 +77,19 @@ def main():
         if os.path.exists(new_name):
             with open(old_name, 'rb') as f1, open(new_name, 'rb') as f2:
                 if f1.read() == f2.read():
-                    os.remove(old_name)  # Remove the old file since it's identical
+                    os.remove(old_name)
                     continue
         
         # Either new file doesn't exist or contents are different
         if os.path.exists(new_name):
-            os.remove(new_name)  # Remove existing file before renaming
+            os.remove(new_name)
         os.rename(old_name, new_name)
 
     # Upload to S3
     print("Uploading data to S3...")
     sagemaker_session = Session()
-    # print(inputs)
-    # inputs is s3://tf-binding-sites/pretraining/data
-
-    # Read cell line information
-    # cell_line_info_file = "cell_line_info.json"
-    # with open(cell_line_info_file, 'r') as f:
-    #     cell_line_info = json.load(f)
-    # print(cell_line_info)
-
     inputs = sagemaker_session.upload_data(path=local_dir, bucket=args.s3_bucket, key_prefix=args.s3_prefix)
     
-    # # Define which cell lines you want to include
-    # selected_cell_lines = ["MCF7", "LNCaP"]  # Replace with your actual cell line names
-
-    # # Set up your inputs dictionary
-    # inputs = {}
-
-    # # 1. Add the root level files (first depth)
-    # inputs['root'] = f"s3://{args.s3_bucket}/pretraining/data"
-
-    # # 2. Add the precomputed folder
-    # inputs['precomputed'] = f"s3://{args.s3_bucket}/pretraining/data/precomputed"
-
-    # # 3. Add only specific cell lines
-    # for cell_line in selected_cell_lines:
-    #     inputs[f"cell_line_{cell_line}"] = f"s3://{args.s3_bucket}/pretraining/data/cell_lines/{cell_line}"
-
-    # print(inputs)
-
     # Configure SageMaker training
     print("Setting up SageMaker training job...")
     estimator = PyTorch(
@@ -129,18 +113,6 @@ def main():
             # 'filter-type': str(filter_type),
         }
     )
-
-    # set_of_cell_lines = set(cell_line_info['training_cell_lines'] + cell_line_info['validation_cell_lines'])
-
-    # inputs = {
-    #     'precomputed': f"s3://{args.s3_bucket}/{args.s3_prefix}/precomputed",
-    #     'train_data': f"s3://{args.s3_bucket}/{args.s3_prefix}/training_combined_{validation_identifier}.csv",
-    #     'valid_data': f"s3://{args.s3_bucket}/{args.s3_prefix}/validation_combined_{validation_identifier}.csv",
-    #     'genome_fa': f"s3://{args.s3_bucket}/{args.s3_prefix}/genome.fa",
-    #     'genome_fa_fai': f"s3://{args.s3_bucket}/{args.s3_prefix}/genome.fa.fai",
-    # }
-    # for cell_line in set_of_cell_lines:
-    #     inputs[f'cell_line_{cell_line}'] = f"s3://{args.s3_bucket}/{args.s3_prefix}/cell_lines/{cell_line}"
         
     estimator.fit(inputs, wait=False)
     print("Training job initiated")
