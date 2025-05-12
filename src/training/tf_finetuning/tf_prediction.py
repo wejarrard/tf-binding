@@ -189,6 +189,7 @@ def get_data_loaders(
         bed_file=os.path.join(data_dir, train_file),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        # cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
         return_augs=False,
         rc_aug=False, # Flip or not flip the sequence
         shift_augs=(-500, 500),
@@ -202,6 +203,7 @@ def get_data_loaders(
         bed_file=os.path.join(data_dir, valid_file),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir=os.path.join(data_dir, "cell_lines/"),
+        # cell_lines_dir=os.path.join("/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"),
         return_augs=False,
         rc_aug=False,
         context_length=DEFAULT_CONTEXT_LENGTH,
@@ -492,8 +494,8 @@ if __name__ == "__main__":
     parser.add_argument("--focal-loss-alpha", type=float, default=HyperParams.focal_loss_alpha)
     parser.add_argument("--focal-loss-gamma", type=float, default=HyperParams.focal_loss_gamma)
     parser.add_argument("--local_rank", type=int, default=int(os.environ.get("LOCAL_RANK", 0)))
-    parser.add_argument("--train-file", type=str, default="training_combined.csv")
-    parser.add_argument("--valid-file", type=str, default="validation_combined.csv")
+    parser.add_argument("--train-file", type=str, default="data_splits/training_FOXA1_FOXA2.csv")
+    parser.add_argument("--valid-file", type=str, default="data_splits/validation_FOXA1_FOXA2.csv")
     parser.add_argument("--transform-type", type=str, default="NONE")
     parser.add_argument("--filter-type", type=str, default="NONE")
 

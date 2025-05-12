@@ -2,6 +2,7 @@
     "AR": "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-NO-FLIP-2025-04-14-17-06-32-271/output/model.tar.gz",
     "AR-old": "s3://tf-binding-sites/finetuning/results/output/AR-22Rv1-2025-02-14-20-55-42-184/output/model.tar.gz",
     "AR-CellLine": "s3://tf-binding-sites/finetuning/results/output/AR-VCAP-NO-FLIP-2025-04-15-05-13-56-375/output/model.tar.gz",
+    "AR-Chr": "s3://tf-binding-sites/finetuning/results/output/AR-chr7-NO-FLIP-2025-04-10-23-33-49-557/output/model.tar.gz",
     "FOXA1": "s3://tf-binding-sites/finetuning/results/output/FOXA1-22Rv1-2025-02-15-18-14-22-064/output/model.tar.gz",
     "FOXA1-CellLine": "s3://tf-binding-sites/finetuning/results/output/FOXA1-LNCAP-2025-03-03-19-35-34-851/output/model.tar.gz",
     "FOXA1-Chr": "s3://tf-binding-sites/finetuning/results/output/FOXA1-chr7-2025-03-03-19-37-38-073/output/model.tar.gz",
@@ -26,5 +27,6 @@
     "MAX-Ishikawa": "s3://tf-binding-sites/finetuning/results/output/MAX-Ishikawa-NO-FLIP-2025-04-17-16-38-25-079/output/model.tar.gz",
     "NR3C1-HELA": "s3://tf-binding-sites/finetuning/results/output/NR3C1-HELA-NO-FLIP-2025-04-15-18-05-49-277/output/model.tar.gz",
     "NR3C1-VCAP": "s3://tf-binding-sites/finetuning/results/output/NR3C1-VCAP-NO-FLIP-2025-04-15-05-25-46-450/output/model.tar.gz",
-    "CTCF-LOO": "s3://tf-binding-sites/finetuning/results/output/CTCF-A549-SK-N-SH-JURKAT-HELA-PC-3-NO-F-2025-04-16-18-37-21-666/output/model.tar.gz"
+    "CTCF-LOO": "s3://tf-binding-sites/finetuning/results/output/CTCF-A549-SK-N-SH-JURKAT-HELA-PC-3-NO-F-2025-04-16-18-37-21-666/output/model.tar.gz",
+    "FOX-Contrasting": "s3://tf-binding-sites/finetuning/results/output/FOXA1-FOXA2-Contrasting-2025-05-04-14-12-18-192/output/model.tar.gz"
 }

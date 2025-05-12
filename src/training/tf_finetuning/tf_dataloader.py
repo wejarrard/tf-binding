@@ -496,19 +496,7 @@ class TFIntervalDataset(Dataset):
         self.mode = mode
 
     def process_tfs(self, score: int, label) -> tuple[torch.Tensor, torch.Tensor]:
-        if type(label) == int:
-            return torch.tensor([score]), torch.tensor([label], dtype=torch.float32)
-        if label == 'FOXA1':
-            label_encoded = torch.tensor([1, 0], dtype=torch.float32)
-        elif label == 'FOXM1':
-            label_encoded = torch.tensor([0, 1], dtype=torch.float32)
-        elif label == 'FOXM1_FOXA1':
-            label_encoded = torch.tensor([1, 1], dtype=torch.float32)
-        else:
-            label_encoded = torch.tensor([0, 0], dtype=torch.float32)
-
-        return torch.tensor([score]), label_encoded
-
+        return torch.tensor([score]), torch.tensor([label], dtype=torch.float32)
 
     def __getitem__(self, ind):
         interval = self.df.row(ind)
@@ -561,7 +549,7 @@ if __name__ == "__main__":
     torch.manual_seed(30)
     data_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data"
     train_dataset = TFIntervalDataset(
-        bed_file=os.path.join(data_dir, 'data_splits', 'AR_22Rv1.csv'),
+        bed_file=os.path.join(data_dir, 'data_splits', 'training_FOXA1_FOXA2.bed'),
         fasta_file=os.path.join(data_dir, "genome.fa"),
         cell_lines_dir="/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines",
         return_augs=False,

@@ -11,5 +11,16 @@
     "MDA-MB-231",
     "SK-N-SH"
   ],
-  "validation_cell_lines": []
+  "validation_cell_lines": [
+    "22Rv1",
+    "HELA",
+    "SK-N-SH",
+    "Hep_G2",
+    "AN3_CA",
+    "Ishikawa",
+    "MCF7",
+    "MDA-MB-231",
+    "K-562",
+    "A549"
+  ]
 }

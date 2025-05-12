@@ -140,36 +140,6 @@ def intersect_bed_files(main_df: pd.DataFrame, intersect_df: pd.DataFrame) -> pd
 
     return drop_duplicates_and_sort(intersected_df)
 
-def intersect_colocalization_bed_files(df: pd.DataFrame, intersect_df: pd.DataFrame, include_count: bool = False) -> pd.DataFrame:
-    col_names = df.columns.tolist()
-    with tempfile.NamedTemporaryFile(delete=False, mode='w') as main_file, \
-         tempfile.NamedTemporaryFile(delete=False, mode='w') as intersect_file, \
-         tempfile.NamedTemporaryFile(delete=False, mode='w') as result_file:
-        
-        main_path = main_file.name
-        intersect_path = intersect_file.name
-        result_path = result_file.name
-
-        df.to_csv(main_path, sep="\t", index=False, header=False)
-        intersect_df.to_csv(intersect_path, sep="\t", index=False, header=False)
-
-        command = f"bedtools intersect -a {main_path} -b {intersect_path} -wa -wb > {result_path}"
-        run_bedtools_command(command)
-
-        intersected_df = pd.read_csv(result_path, sep="\t", header=None)
-        
-        if include_count:
-            intersected_df = intersected_df.iloc[:, [-4, -3, -2, -1] + [i + 3 for i in range(len(col_names) - 3)]]
-            intersected_df.columns = ["chr", "start", "end", "count_2"] + col_names[3:]
-        else:
-            intersected_df = intersected_df.iloc[:, [-3, -2, -1] + [i + 3 for i in range(len(col_names) - 3)]]
-            intersected_df.columns = col_names
-
-    os.remove(main_path)
-    os.remove(intersect_path)
-    os.remove(result_path)
-
-    return drop_duplicates_and_sort(intersected_df)
 
 # ============================================================
 # Data Processing Functions
@@ -354,10 +324,7 @@ def parse_arguments():
     validation_group = parser.add_mutually_exclusive_group(required=False)
     validation_group.add_argument("--validation_cell_lines", type=str, nargs="*", help="Cell lines for validation set")
     validation_group.add_argument("--validation_chromosomes", type=str, nargs="*", help="Chromosomes for validation set")
-    
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument("--contrasting_tf", type=str, help="Transcription factor for negative dataset")
-    group.add_argument("--colocalization_tf", type=str, help="Transcription factor for colocalization dataset")
+
     parser.add_argument("--chip_provided", action="store_true", help="Use provided ChIP data for negative set")
     parser.add_argument("--cell_line_mapping", type=str, default="cell_line_mapping.json")
     
@@ -376,11 +343,7 @@ def parse_arguments():
     parser.add_argument("--negative_regions_bed", type=str, nargs="+", help="Path(s) to BED file(s) for negative samples")
 
     args = parser.parse_args()
-
-    if args.chip_provided and not args.colocalization_tf:
-        parser.error("--chip_provided requires --colocalization_tf")
-    if args.contrasting_tf:
-        raise NotImplementedError("The feature 'contrasting_tf' is not implemented yet")
+    
     if args.no_ground_truth and not args.input_bed_file:
         parser.error("--input_bed_file is required when --no_ground_truth is set")
     if not args.no_ground_truth and not args.tf:

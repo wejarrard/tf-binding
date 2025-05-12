@@ -279,3 +279,5 @@ main "$@"
 # local cell_lines=("LuCaP_49:SRR12455437" "LuCaP_93:SRR12455443" "LuCaP_145_1:SRR12455430" "LuCaP_145_2:SRR12455432" "LuCaP_173_1:SRR12455434") # More FOXA1 all these have replicates
 # local cell_lines=("42D-ENZR")
 # local cell_lines=("22Rv1")
+
+# bash tf_inference.sh --atac_dir LuCaP_81:SRR12455442,LuCaP_78:SRR12455441,LuCaP_77CR:SRR12455440,LuCaP_77:SRR12455439 --models AR,FOXA1,HOXB13 --parallel
