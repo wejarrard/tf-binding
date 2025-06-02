@@ -28,5 +28,8 @@
     "NR3C1-HELA": "s3://tf-binding-sites/finetuning/results/output/NR3C1-HELA-NO-FLIP-2025-04-15-18-05-49-277/output/model.tar.gz",
     "NR3C1-VCAP": "s3://tf-binding-sites/finetuning/results/output/NR3C1-VCAP-NO-FLIP-2025-04-15-05-25-46-450/output/model.tar.gz",
     "CTCF-LOO": "s3://tf-binding-sites/finetuning/results/output/CTCF-A549-SK-N-SH-JURKAT-HELA-PC-3-NO-F-2025-04-16-18-37-21-666/output/model.tar.gz",
-    "FOX-Contrasting": "s3://tf-binding-sites/finetuning/results/output/FOXA1-FOXA2-Contrasting-2025-05-04-14-12-18-192/output/model.tar.gz"
+    "FOX-Contrasting": "s3://tf-binding-sites/finetuning/results/output/FOXA1-FOXA2-Contrasting-2025-05-04-14-12-18-192/output/model.tar.gz",
+    "FOX-Contrasting-A549": "s3://tf-binding-sites/finetuning/results/output/FOXA1-FOXA2-Contrasting-2025-05-13-22-28-54-976/output/model.tar.gz",
+    "FOXA2-FOXM1-Contrasting": "s3://tf-binding-sites/finetuning/results/output/FOXA2-FOXM1-Contrasting-2025-05-28-03-33-02-599/output/model.tar.gz",
+    "AR-NR3C1-Contrasting": "s3://tf-binding-sites/finetuning/results/output/AR-NR3C1-Contrasting-2025-05-27-04-23-06-104/output/model.tar.gz"
 }

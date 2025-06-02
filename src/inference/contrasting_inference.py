@@ -1,24 +1,40 @@
+# create the bed file you want to predict on
 import pandas as pd
-import numpy as np
 import os
 import tempfile
 import subprocess
 import json
-
-from sagemaker import Session
-from sagemaker.pytorch import PyTorch
+import time
 
 
 # ============================================================
-TF1 = "AR"
-TF2 = "NR3C1"
-OUTPUT_DIR = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/data_splits"
+TF1 = "FOXA2"
+TF2 = "FOXM1"
+model_name = "FOXA2-FOXM1-Contrasting"
+
 
 # Validation set configuration
-VALIDATION_TYPE = "chromosomes"  # Options: "chromosomes", "cell_lines", or "random"
-VALIDATION_CHROMOSOMES = ["chr2"]  # Chromosomes to use for validation
-VALIDATION_CELL_LINES = ["A549"]  # Cell lines to use for validation
-VALIDATION_SPLIT_RATIO = 0.1  # Ratio for random split validation
+VALIDATION_TYPE = "chromosomes"  # Options: "chromosomes", "cell_lines"
+VALIDATION_CELL_LINES = ["A549"]  # Cell lines to use for validation if VALIDATION_TYPE is "cell_lines"
+VALIDATION_CHROMOSOMES = ["chr2"] # Chromosomes to use for validation if VALIDATION_TYPE is "chromosomes"
+OUTPUT_DIR = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/data_splits"
+
+if VALIDATION_TYPE == "cell_lines":
+    assert len(VALIDATION_CELL_LINES) == 1, "VALIDATION_CELL_LINES must contain only one cell line if VALIDATION_TYPE is 'cell_lines'"
+elif VALIDATION_TYPE == "chromosomes":
+    assert len(VALIDATION_CHROMOSOMES) >= 1, "VALIDATION_CHROMOSOMES must contain at least one chromosome if VALIDATION_TYPE is 'chromosomes'"
+else:
+    raise ValueError("VALIDATION_TYPE must be either 'cell_lines' or 'chromosomes'")
+
+# This variable is now determined dynamically later based on VALIDATION_TYPE
+# CELL_LINE_DIR = f"/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines/{VALIDATION_CELL_LINES[0]}"
+BASE_CELL_LINE_DATA_DIR = "/data1/projects/human_cistrome/aligned_chip_data/merged_cell_lines"
+
+
+# other 
+PROJECT_PATH = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
+LOG_DIR = f"{PROJECT_PATH}/logs"
+
 
 # ============================================================
 # Constants
@@ -114,10 +130,6 @@ def threshold_peaks(df):
         df = df[df["count"] > threshold]
     return df
 
-# ============================================================
-# Main
-# ============================================================
-
 
 # cell lines for TF1
 TF1_DIR = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors/{TF1}/merged"
@@ -195,74 +207,120 @@ contrasting_df['cell_line'].value_counts()
 
 
 # create validation set based on configuration
-if VALIDATION_TYPE == "chromosomes":
-    validation_df = contrasting_df[contrasting_df['chr'].isin(VALIDATION_CHROMOSOMES)]
-    training_df = contrasting_df[~contrasting_df['chr'].isin(VALIDATION_CHROMOSOMES)]
-elif VALIDATION_TYPE == "cell_lines":
-    validation_df = contrasting_df[contrasting_df['cell_line'].isin(VALIDATION_CELL_LINES)]
-    training_df = contrasting_df[~contrasting_df['cell_line'].isin(VALIDATION_CELL_LINES)]
-else:  # random split
-    # Ensure balanced split by sampling separately for each label
-    validation_df = pd.concat([
-        contrasting_df[contrasting_df['label'] == 0].sample(frac=VALIDATION_SPLIT_RATIO, random_state=42),
-        contrasting_df[contrasting_df['label'] == 1].sample(frac=VALIDATION_SPLIT_RATIO, random_state=42)
-    ])
-    training_df = contrasting_df[~contrasting_df.index.isin(validation_df.index)]
+if VALIDATION_TYPE == "cell_lines":
+    test_df = contrasting_df[contrasting_df['cell_line'].isin(VALIDATION_CELL_LINES)]
+elif VALIDATION_TYPE == "chromosomes":
+    test_df = contrasting_df[contrasting_df['chr'].isin(VALIDATION_CHROMOSOMES)]
+else:
+    # This case should have been caught by the assertion earlier, but as a fallback:
+    raise ValueError("Invalid VALIDATION_TYPE specified.")
 
-# double check lengths of binding patterns
-len_0_validation = len(validation_df[validation_df['label'] == 0])
-len_1_validation = len(validation_df[validation_df['label'] == 1])
-
-print(f"Length of 0 in validation: {len_0_validation}")
-print(f"Length of 1 in validation: {len_1_validation}")
-
-# save the contrasting df
-validation_df.to_csv(f"{OUTPUT_DIR}/validation_{TF1}_{TF2}.csv", sep="\t", header=False, index=False)
-
-# double check lengths of binding patterns
-len_0_training = len(training_df[training_df['label'] == int(0)])
-len_1_training = len(training_df[training_df['label'] == int(1)])
-
-print(f"Length of 0 in training: {len_0_training}")
-print(f"Length of 1 in training: {len_1_training}")
-
-# save the training set
-training_df.to_csv(f"{OUTPUT_DIR}/training_{TF1}_{TF2}.csv", sep="\t", index=False)
+# save the test set
+test_df.to_csv(f"{OUTPUT_DIR}/test_{TF1}_{TF2}.csv", sep="\t", index=False)
 
 
 
 
+import json
+
+# load in models.json as a dictionary
+with open("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/inference/models.json", "r") as f:
+    models = json.load(f)
+
+# load in the model
+model = models[model_name]
+
+print(model)
+
+
+
+# Determine validation target identifier and specific cell line directory for prepare_data.py
+if VALIDATION_TYPE == "cell_lines":
+    validation_target_identifier = VALIDATION_CELL_LINES[0]
+    cell_line_dir_for_prepare_data = f"{BASE_CELL_LINE_DATA_DIR}/{VALIDATION_CELL_LINES[0]}"
+elif VALIDATION_TYPE == "chromosomes":
+    validation_target_identifier = "_".join(sorted(VALIDATION_CHROMOSOMES))
+    cell_line_dir_for_prepare_data = BASE_CELL_LINE_DATA_DIR
+
+
+#########################
+# Prepare data using qsub
+print(f"Preparing data for {validation_target_identifier} - {model_name} using qsub...")
+    
+    # Create qsub script content
+qsub_script_content = f"""#!/bin/bash
+#$ -N prep_{validation_target_identifier}_{model_name}
+#$ -o {LOG_DIR}/contrasting_inference/{validation_target_identifier}_{model_name}.log
+#$ -j y
+#$ -l h_vmem=32G
+
+source ~/.bashrc
+
+conda activate pterodactyl
+
+python "{PROJECT_PATH}/src/inference/prepare_data.py" \
+    --input_file "{OUTPUT_DIR}/test_{TF1}_{TF2}.csv" \
+    --output_path "{PROJECT_PATH}/data/jsonl/contrasting_{TF1}_{TF2}" \
+    --cell_line_dir "{cell_line_dir_for_prepare_data}"
+"""
+
+# Write qsub script to file
+qsub_script_path = f"{LOG_DIR}/contrasting_inference/{validation_target_identifier}_{model_name}.sh"
+with open(qsub_script_path, 'w') as f:
+    f.write(qsub_script_content)
+
+# Make the script executable
+os.chmod(qsub_script_path, 0o755)
+
+# Submit the job and get job ID
+qsub_output = subprocess.run(['qsub', qsub_script_path], capture_output=True, text=True)
+job_id = qsub_output.stdout.strip().split()[2]
+
+# Wait for the job to complete
+print(f"Waiting for prepare_data.py job ({job_id}) to complete...")
+while True:
+    try:
+        subprocess.run(['qstat', '-j', job_id], capture_output=True, check=True)
+        time.sleep(30)
+    except subprocess.CalledProcessError:
+        break
 
 
 
 
-# ============================================================
-# Upload data to S3
-# ============================================================
 
-print("Uploading data to S3...")
-sagemaker_session = Session()
-local_dir = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/data_splits"
-inputs = sagemaker_session.upload_data(path=local_dir, bucket="tf-binding-sites", key_prefix="pretraining/data")
 
-estimator = PyTorch(
-    base_job_name=f"{TF1}-{TF2}-Contrasting",
-    entry_point='tf_prediction.py',
-    source_dir="/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/training/tf_finetuning",
-    output_path=f"s3://tf-binding-sites/finetuning/results/output",
-    code_location=f"s3://tf-binding-sites/finetuning/results/code",
-    role='arn:aws:iam::016114370410:role/tf-binding-sites',
-    py_version="py310",
-    framework_version='2.0.0',
-    volume_size=900,
-    instance_count=1,
-    max_run=1209600,
-    instance_type='ml.g5.16xlarge',
-    hyperparameters={
-        'learning-rate': 1e-6,
-        'train-file': f'training_{TF1}_{TF2}.csv',
-        'valid-file': f'validation_{TF1}_{TF2}.csv',
-    }
-)
-        
-estimator.fit(inputs, wait=False)
+
+# Run inference
+print(f"Running inference for {validation_target_identifier} using {model_name}...")
+
+# Create log file path
+log_file = f"{LOG_DIR}/contrasting_inference/{validation_target_identifier}_{model_name}_inference.log"
+
+# Run the inference script
+inference_cmd = [
+    "python",
+    f"{PROJECT_PATH}/src/inference/aws_inference.py",
+    "--model", model_name,
+    "--sample", validation_target_identifier,
+    "--model_paths_file", f"{PROJECT_PATH}/src/inference/models.json",
+    "--project_path", PROJECT_PATH,
+    "--local_dir", f"{PROJECT_PATH}/data/jsonl/contrasting_{TF1}_{TF2}"
+]
+
+# Run the command and capture output
+with open(log_file, 'a') as f:
+    process = subprocess.Popen(
+        inference_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True
+    )
+    
+    # Stream output to both console and log file
+    for line in process.stdout:
+        print(line, end='')
+        f.write(line)
+        f.flush()
+    
+    process.wait()
