@@ -451,15 +451,27 @@ from dask.distributed import Client, progress
 from dask_jobqueue import SGECluster
 
 
+def reshape_attributions_on_worker(attributions_df: pl.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Helper function to run on a Dask worker.
+    Converts the 'attributions' column of the given DataFrame to a list,
+    then calls reshape_attributions_fast.
+    """
+    print("Reshaping attributions on worker: converting column to list...")
+    attributions_list = attributions_df.get_column("attributions").to_list()
+    print(f"Converted to list with {len(attributions_list)} entries on worker.")
+    return reshape_attributions_fast(attributions_list)
+
+
 def process_region_data_dask_fully_utilized(
     df: pl.DataFrame,  # Expects an eager Polars DataFrame or a LazyFrame that's manageable to collect parts of on client/pass to workers
     base_pileup_dir: Optional[Path] = None,
     worker_cores: int = 4,
     worker_memory: str = "16GB",
     num_workers: int = 10,
-    sge_queue: Optional[str] = None, # Example: Add SGE queue
+    sge_queue: Optional[str] = 'main', # Example: Add SGE queue
     sge_project: Optional[str] = None, # Example: Add SGE project
-    network_interface: str = 'eno1'  # Changed default to eno1
+    network_interface: str = 'ens7f0' # on worker: ['lo', 'ens7f0', 'ens7f1', 'docker0', 'enp0s20f0u7u2c2'] on head node:['lo', 'eno1', 'eno2', 'enp23s0f0', 'enp23s0f1', 'docker0', 'vethde8cbac']
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Processes attribution and pileup data, utilizing Dask for the entire computational workflow
@@ -480,19 +492,25 @@ def process_region_data_dask_fully_utilized(
     print(f"Processing {actual_df_length} regions across cell lines using Dask...")
 
     print("Step 1: Setting up Dask SGECluster...")
+
+    os.makedirs("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs", exist_ok=True)
     
     if os.path.exists("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs/dask_logs.txt"):
         os.remove("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs/dask_logs.txt")
 
     cluster_kwargs = {
+        "queue": sge_queue,
         "cores": worker_cores,
         "memory": worker_memory,
-        "job_extra_directives": ["-j y", "-o /data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs/dask_logs.txt"],
-        "interface": network_interface, # Added network interface
-        # "log_directory": './dask_logs', # Recommended for debugging
+        "job_extra_directives": [
+            "-j y", 
+            "-o /data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs/dask_logs.txt",
+            "-l hostname=node5"
+        ],
+        "interface": network_interface, # Interface for Dask workers (e.g., 'ens7f0')
+        "scheduler_options": {'interface': 'eno1'}, # Interface for Dask scheduler (on head node)
+        "log_directory": '/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/logs/dask_logs', # Recommended for debugging
     }
-    if sge_queue:
-        cluster_kwargs["queue"] = sge_queue
     if sge_project:
         cluster_kwargs["project"] = sge_project
     
@@ -503,13 +521,20 @@ def process_region_data_dask_fully_utilized(
 
     # --- Task 1: Reshape Attributions (to be run on a Dask worker) ---
     print("Step 2: Submitting attribution reshaping task to Dask...")
-    # Extract "attributions" column data to a Python list on the client
-    # The input df is expected to be an eager DataFrame (e.g., df_balanced)
-    print("Extracting attributions column to list on client...")
-    attributions_data_for_task = df.get_column("attributions").to_list()
-    print(f"Extracted {len(attributions_data_for_task)} attribution entries.")
+    # Prepare the "attributions" column as a DataFrame for the Dask task
+    # Cloning helps ensure it's a clean, eager DataFrame.
+    print("Preparing attributions column DataFrame for Dask task...")
+    attributions_df_for_task = df.select("attributions").clone()
+    print(f"Prepared DataFrame with 'attributions' column for worker.")
 
-    future_attrs_tuple = dask.delayed(reshape_attributions_fast, name="reshape-attributions")(attributions_data_for_task)
+    # Scatter the large DataFrame to workers and get a future
+    print("Scattering attributions DataFrame to Dask workers...")
+    future_attributions_df = client.scatter(attributions_df_for_task, broadcast=True)
+    # Clear the local copy to free memory on the client
+    del attributions_df_for_task 
+    gc.collect()
+
+    future_attrs_tuple = dask.delayed(reshape_attributions_on_worker, name="reshape-attributions-on-worker")(future_attributions_df)
 
     # --- Prepare for Pileup Processing Tasks ---
     # `df.with_row_index` is relatively cheap on the client if `df` is eager.
@@ -538,7 +563,13 @@ def process_region_data_dask_fully_utilized(
             if hasattr(group_df_for_cell_line, 'collect'): # Should not be needed if group_by collected
                  group_df_for_cell_line = group_df_for_cell_line.collect()
 
-            task = dask.delayed(process_pileups_batch, name=f"pileup-batch-{i}-{cell_line_name}")(pileup_dir_for_task, group_df_for_cell_line)
+            # Scatter the group DataFrame to workers
+            future_group_df = client.scatter(group_df_for_cell_line, broadcast=False)
+            # Clear the local copy to free memory on the client.
+            del group_df_for_cell_line 
+            gc.collect()
+
+            task = dask.delayed(process_pileups_batch, name=f"pileup-batch-{i}-{cell_line_name}")(pileup_dir_for_task, future_group_df)
             pileup_delayed_tasks.append(task)
 
     # --- Compute All Tasks ---
