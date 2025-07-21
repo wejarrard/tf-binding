@@ -11,12 +11,12 @@ sys.path.append(notebook_dir)
 
 
 project_path = "/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding"
-model = "FOXA1"
+model = "AR"
 sample = "22Rv1"
-jaspar_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/analysis/interpretability/motifs/FOXA1.jaspar"  # Update this path
-ground_truth_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors/FOXA1/merged/22RV1_FOXA1_merged.bed"
+jaspar_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/src/analysis/interpretability/motifs/AR.jaspar"  # Update this path
+ground_truth_file = f"/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/transcription_factors/AR/merged/22RV1_AR_merged.bed"
 
-df = pl.read_parquet("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/processed_results/FOXA1_22Rv1_processed.parquet", 
+df = pl.read_parquet("/data1/datasets_1/human_cistrome/chip-atlas/peak_calls/tfbinding_scripts/tf-binding/data/processed_results/AR_22Rv1_processed.parquet", 
                     columns=["chr_name", "start", "end", "cell_line", "targets", "predicted", "weights", "probabilities", "attributions"],
                     parallel="columns",                     # Enable parallel reading
                     use_statistics=True,                    # Use parquet statistics
@@ -1367,7 +1367,7 @@ print("-" * 20)
 # 'relative': Bin's max signal must be >= X% of the sample's max signal.
 METHOD = 'rank' # OPTIONS: 'rank', 'absolute', 'relative'
 
-NUM_BINS = 32  # switched from 5 to 32 (~128 bp per bin across 4096 bp window)
+NUM_BINS = 5  # switched from 5 to 32 (~128 bp per bin across 4096 bp window)
 TARGET_BIN_INDEX = 2
 
 # --- Settings for 'rank' method ---
@@ -2072,5 +2072,175 @@ if 'negative_seqlets' in globals() and not negative_seqlets.empty:
     )
 else:
     print("No negative seqlets available. Run the negative seqlet generation cell first.")
+
+# %%
+# === Motif Proximity Analysis =============================================
+# Author: automated addition
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import polars as pl
+import random
+
+def analyze_motif_proximity(
+    all_seqlets_pd: pd.DataFrame,
+    motif_database: dict,
+    motif1_name: str,
+    motif2_name: str,
+    logp_cutoff: float = -10.0,
+    proximity_threshold: int = 25,
+    num_permutations: int = 100,
+):
+    """
+    Analyzes the spatial proximity of two motifs (e.g., AR and FOXA1).
+
+    This function performs the following steps:
+    1.  Labels all seqlets with their best-matching motif if the PWM score
+        is above a specified cutoff.
+    2.  For each 4096-bp sample window, calculates the distances (gaps)
+        between all pairs of motif1 and motif2 seqlets.
+    3.  Plots a histogram of the observed gap distances.
+    4.  Performs a permutation test to determine if the number of "close"
+        pairs (gap <= proximity_threshold) is statistically significant
+        compared to a null model where motif positions are shuffled.
+
+    Args:
+        all_seqlets_pd: Pandas DataFrame of all seqlets, from get_seqlets().
+        motif_database: Dictionary mapping motif names to their JASPAR file paths.
+        motif1_name: The name of the first motif (e.g., "AR").
+        motif2_name: The name of the second motif (e.g., "FOXA1").
+        logp_cutoff: The log-probability score required for a seqlet to be
+                     considered a match to a motif.
+        proximity_threshold: The distance in base pairs to define a "close" pair.
+        num_permutations: The number of shuffling iterations for the permutation test.
+    """
+    print("\n" + "="*60)
+    print(f"Analyzing Proximity between '{motif1_name}' and '{motif2_name}' Motifs")
+    print("="*60 + "\n")
+
+    # --- 1. Annotate every seqlet with its best-matching motif ---
+    print(f"Scoring seqlets against PWMs (log-prob cutoff: {logp_cutoff})...")
+    pwm1 = load_jaspar_pwm(motif_database[motif1_name])
+    pwm2 = load_jaspar_pwm(motif_database[motif2_name])
+
+    def label_seqlet(seq: str) -> str:
+        score1 = pwm_best_score(seq, pwm1)
+        score2 = pwm_best_score(seq, pwm2)
+        if max(score1, score2) < logp_cutoff:
+            return None  # Not a good match to either
+        return motif1_name if score1 > score2 else motif2_name
+
+    all_seqlets_pd['motif'] = all_seqlets_pd['sequence'].apply(label_seqlet)
+    motif_seqlets_pl = pl.from_pandas(all_seqlets_pd.dropna(subset=['motif']))
+    
+    count1 = motif_seqlets_pl.filter(pl.col('motif') == motif1_name).height
+    count2 = motif_seqlets_pl.filter(pl.col('motif') == motif2_name).height
+    print(f"Found {count1} '{motif1_name}' seqlets and {count2} '{motif2_name}' seqlets.")
+    
+    if count1 == 0 or count2 == 0:
+        print("One or both motifs not found in seqlets. Cannot perform proximity analysis.")
+        return
+
+    # --- 2. Compute all pairwise distances between the two motifs ---
+    def get_pairwise_distances(df: pl.DataFrame) -> list:
+        """Helper to return a list of gaps for one 4096-bp region."""
+        m1 = df.filter(pl.col("motif") == motif1_name).select(["start", "end"]).to_numpy()
+        m2 = df.filter(pl.col("motif") == motif2_name).select(["start", "end"]).to_numpy()
+        gaps = []
+        if m1.size == 0 or m2.size == 0:
+            return gaps
+        for s1, e1 in m1:
+            for s2, e2 in m2:
+                gap = max(0, max(s1, s2) - min(e1, e2) - 1)  # 0=overlap
+                gaps.append(gap)
+        return gaps
+
+    print("\nCalculating observed distances between motifs in each sample...")
+    observed_gaps = []
+    for _, group_df in motif_seqlets_pl.group_by("example_idx"):
+        observed_gaps.extend(get_pairwise_distances(group_df))
+    
+    observed_gaps = np.array(observed_gaps)
+    if observed_gaps.size == 0:
+        print("No samples contained both motifs. Cannot perform proximity analysis.")
+        return
+        
+    print(f"Collected {len(observed_gaps)} '{motif1_name}'<->'{motif2_name}' pairs across all samples.")
+
+    # --- 3. Visualize the distribution of distances ---
+    plt.figure(figsize=(10, 6))
+    plt.hist(observed_gaps, bins=np.logspace(0, np.log10(4096), 50), color='steelblue', alpha=0.8)
+    plt.xscale('log')
+    plt.axvline(proximity_threshold, color='red', linestyle='--', label=f'Proximity Threshold ({proximity_threshold} bp)')
+    plt.title(f"Distribution of Distances between '{motif1_name}' and '{motif2_name}'")
+    plt.xlabel("Distance (bp, log scale)")
+    plt.ylabel("Number of Motif Pairs")
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.show()
+
+    # --- 4. Perform permutation test for enrichment of close pairs ---
+    print(f"\nPerforming permutation test for enrichment of close pairs (<= {proximity_threshold} bp)...")
+    
+    def count_close_pairs_in_shuffled(group_df: pl.DataFrame, rng) -> int:
+        """Shuffle motif1 positions and count close pairs."""
+        m1 = group_df.filter(pl.col("motif") == motif1_name)
+        m2 = group_df.filter(pl.col("motif") == motif2_name)
+        
+        if m1.height == 0 or m2.height == 0:
+            return 0
+        
+        # Shuffle starts and recalculate ends
+        shuffled_starts = rng.permutation(m1['start'].to_numpy())
+        m1_shuffled = m1.with_columns(
+            pl.Series("start", shuffled_starts),
+            pl.Series("end", shuffled_starts + (m1['end'] - m1['start']))
+        )
+        
+        # Re-run distance calculation
+        shuffled_distances = get_pairwise_distances(pl.concat([m1_shuffled, m2]))
+        return np.sum(np.array(shuffled_distances) <= proximity_threshold)
+
+    null_distribution = []
+    grouped_data = list(motif_seqlets_pl.group_by("example_idx"))
+    
+    for i in tqdm(range(num_permutations), desc="Permutation Test"):
+        rng = np.random.default_rng(seed=i)
+        total_close_in_perm = 0
+        for _, group_df in grouped_data:
+            total_close_in_perm += count_close_pairs_in_shuffled(group_df, rng)
+        null_distribution.append(total_close_in_perm)
+
+    observed_close_count = np.sum(observed_gaps <= proximity_threshold)
+    p_value = (np.sum(np.array(null_distribution) >= observed_close_count) + 1) / (num_permutations + 1)
+
+    print("\n--- Proximity Analysis Results ---")
+    print(f"Observed pairs within {proximity_threshold} bp: {observed_close_count}")
+    print(f"Mean close pairs in permutations: {np.mean(null_distribution):.2f}")
+    print(f"Permutation p-value (enrichment): {p_value:.4f}")
+    if p_value < 0.05:
+        print("Result: The motifs are SIGNIFICANTLY closer than expected by chance.")
+    else:
+        print("Result: The proximity of motifs is NOT statistically significant.")
+    print("-" * 60)
+
+# %%
+# === Run Motif Proximity Analysis =========================================
+# Ensure 'all_seqlets' and 'MOTIF_DATABASE' are defined from previous cells.
+from tqdm import tqdm
+
+if 'all_seqlets' in globals() and 'MOTIF_DATABASE' in globals():
+    analyze_motif_proximity(
+        all_seqlets_pd=all_seqlets,
+        motif_database=MOTIF_DATABASE,
+        motif1_name="AR",
+        motif2_name="FOXA1",
+        logp_cutoff=-8.0, # A stricter cutoff might give cleaner results
+        proximity_threshold=50, # How close is "close"? (in bp)
+        num_permutations=100
+    )
+else:
+    print("Please run the cells that define 'all_seqlets' and 'MOTIF_DATABASE' first.")
 
 # %%
