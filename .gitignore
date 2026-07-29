@@ -23,3 +23,4 @@ deprecated_scripts.md
 /marginalization_naive.py
 **/*.bed
 src/analysis/interpretability/src/tangermeme_mm
+**/*.egg-info

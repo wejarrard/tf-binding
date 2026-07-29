@@ -59,3 +59,4 @@ dependencies:
       - boto3==1.35.47
       - sagemaker==2.232.2         # pulls boto3/mlflow-adjacent deps as needed
       - -e ./src/analysis/interpretability/src/tangermeme_mm   # installs importable `tangermeme`
+      - --no-deps -e .
