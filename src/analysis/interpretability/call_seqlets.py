@@ -23,7 +23,7 @@ seaborn.set_style('whitegrid')
 from matplotlib.colors import TwoSlopeNorm
 from tangermeme.plot import plot_logo
 from tangermeme.seqlet import recursive_seqlets, tfmodisco_seqlets
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from pathlib import Path
 
 from src.utils.generate_training_peaks import run_bedtools_command

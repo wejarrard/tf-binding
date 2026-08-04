@@ -17,6 +17,13 @@ dependencies:
   - orjson
   - tqdm
   - umap-learn             # live import, missing from old env
+  # --- Originally in pip section ---
+  - pytorch                # may need to migrate to `pip` manager; original version==2.5.0. Upgrading for metal support
+  - transformers           # original ==4.46.1
+  - einops                 # original ==0.8.0
+  - captum                 # original ==0.7.0
+  - boto3                  # original ==1.35.47
+  - sagemaker              # original ==2.232.2
   # --- plotting & interactivity ---
   - matplotlib
   - seaborn
@@ -51,12 +58,5 @@ dependencies:
   - bioconductor-interactivecomplexheatmap
   # --- pip: ML stack + patched tangermeme ---
   - pip:
-      - torch==2.5.0            # manylinux wheel bundles CUDA 12 (works on CentOS 7)
-      - transformers==4.46.1
-      - einops==0.8.0
-      - enformer-pytorch==0.8.10   # pulls its own transitive deps
-      - captum==0.7.0
-      - boto3==1.35.47
-      - sagemaker==2.232.2         # pulls boto3/mlflow-adjacent deps as needed
+      - enformer-pytorch  # original ==0.8.10   # pulls its own transitive deps
       - -e ./src/analysis/interpretability/src/tangermeme_mm   # installs importable `tangermeme`
-      - --no-deps -e .

@@ -24,3 +24,5 @@ deprecated_scripts.md
 **/*.bed
 src/analysis/interpretability/src/tangermeme_mm
 **/*.egg-info
+**/kd_*
+tfcl_pairs.txt
