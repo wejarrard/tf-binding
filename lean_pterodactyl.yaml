@@ -31,7 +31,9 @@ dependencies:
   - ipywidgets
   # --- genomics ---
   - pysam
+  - pybigwig
   - pyfaidx
+  - logomaker
   - bedtools               # bioconda; run_bedtools_command()
   - pybigtools
   # --- external CLI tools this env shells out to ---
@@ -59,4 +61,3 @@ dependencies:
   # --- pip: ML stack + patched tangermeme ---
   - pip:
       - enformer-pytorch  # original ==0.8.10   # pulls its own transitive deps
-      - -e ./src/analysis/interpretability/src/tangermeme_mm   # installs importable `tangermeme`
