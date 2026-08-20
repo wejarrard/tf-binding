@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
 # WAJ 2026-07-30
-#
-# Variant of marginalization_naive.py. The ONLY conceptual change: instead of
-# fabricating the ATAC background channel from scratch (random / constant / zeros),
-# we draw REAL ATAC pileup windows sampled from processed regions. The pileup
-# windows are obtained via call_seqlets.process_region_data_fast, which returns an
-# `atac_pileup_list` of shape (N, 4096) of raw per-base pileup counts.
-#
-# Raw pileups are untransformed, but the model was trained on ATAC that is
-# log10-transformed and Savitzky-Golay smoothed (see
-# src/training/tf_finetuning/tf_dataloader.py: TransformType.LOG10 + FilterType.SAVGOL).
-# We reproduce that same normalization here (toggle NORMALIZE_ATAC) so the sampled
-# background stays in-distribution for the model.
 
 import os
-import pickle
 from datetime import datetime
-from typing import Dict, List, Tuple
+from zoneinfo import ZoneInfo
+from typing import Dict, Tuple
 from pathlib import Path
 import pysam
+import json
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import torch
 import torch.nn as nn
@@ -40,6 +30,8 @@ import seaborn
 
 seaborn.set_style('whitegrid')
 plt.rcParams['figure.dpi'] = 300
+
+# ------------------------------------------------------------------------------
 
 
 def process_pileups_batch(pileup_dir: Path,
@@ -83,10 +75,12 @@ def process_pileups_batch(pileup_dir: Path,
                     positions = np.array(positions)
                     counts = np.array(counts)
                     array_indices = positions - adj_start
-                    valid_mask = (array_indices >= 0) & (array_indices < context_length)
+                    valid_mask = (array_indices >= 0) & (
+                        array_indices < context_length)
                     atac_array[array_indices[valid_mask]] = counts[valid_mask]
             except Exception as e:
-                print(f"Warning: Could not fetch data for {chr_name}:{adj_start}-{adj_end}: {e}")
+                print(
+                    f"Warning: Could not fetch data for {chr_name}:{adj_start}-{adj_end}: {e}")
 
         atac_arrays[idx] = atac_array
 
@@ -107,11 +101,14 @@ def reshape_attributions_fast(df: pl.DataFrame) -> Tuple[np.ndarray, np.ndarray]
     return attrs_list, atac_attribution_list
 
 
-def process_region_data_fast(df: pl.DataFrame,
-                             base_pileup_dir: Path = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def process_region_data_fast(
+        df: pl.DataFrame,
+        base_pileup_dir: Path = None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Reshape attributions and pull raw ATAC pileups in one pass over cell-line groups."""
     if base_pileup_dir is None:
-        base_pileup_dir = Path("/home/ec2-user/tf-binding/data/ATAC_pileups")
+        base_pileup_dir = Path(
+            "/home/ec2-user/projects/tf-binding/data/ATAC_pileups")
 
     print(f"Processing {len(df)} regions across cell lines...")
     attrs_list, atac_attribution_list = reshape_attributions_fast(df)
@@ -123,7 +120,7 @@ def process_region_data_fast(df: pl.DataFrame,
     print(f"Processing {len(cell_line_groups)} cell lines...")
     for cell_line, group_df in tqdm(cell_line_groups, desc="Processing cell lines"):
         cell_line_name = cell_line[0]
-        pileup_dir = base_pileup_dir / cell_line_name 
+        pileup_dir = base_pileup_dir / cell_line_name
 
         if not pileup_dir.exists():
             print(f"Warning: Pileup directory does not exist: {pileup_dir}")
@@ -131,7 +128,8 @@ def process_region_data_fast(df: pl.DataFrame,
                 atac_pileup_arrays[row['idx']] = np.zeros(4096)
             continue
 
-        print(f"Processing {len(group_df)} regions for cell line: {cell_line_name}")
+        print(
+            f"Processing {len(group_df)} regions for cell line: {cell_line_name}")
         atac_arrays_dict = process_pileups_batch(pileup_dir, group_df)
         for idx, atac_array in atac_arrays_dict.items():
             atac_pileup_arrays[idx] = atac_array
@@ -187,16 +185,19 @@ def pwm_consensus(X, thresh=0.5):
 
 def map_state_dict_to_unique_activations(old_state_dict):
     """
-    Maps the old state dictionary to work with our new model architecture that uses unique activations.
+    Maps the old state dictionary to work with our new model architecture that 
+    uses unique activations.
 
-    This function creates a new state dictionary that maintains all the original weights and parameters
-    while being compatible with our new unique activation function structure.
+    This function creates a new state dictionary that maintains all the 
+    original weights and parameters while being compatible with our new 
+    unique activation function structure.
 
     Args:
         old_state_dict (OrderedDict): The original model's state dictionary
 
     Returns:
-        OrderedDict: A new state dictionary compatible with our modified architecture
+        OrderedDict: A new state dictionary compatible with our modified 
+        architecture
     """
     new_state_dict = {}
 
@@ -239,9 +240,10 @@ def load_model(model_dir: str, device, num_tfs=1):
         nn.Flatten(),
     ).to(device)
 
-
     state_dict = torch.load(
-        os.path.join(model_dir, "best_model.pth"), map_location=device, weights_only=True
+        os.path.join(model_dir, "best_model.pth"),
+        map_location=device,
+        weights_only=True,
     )
 
     intermediate_state_dict = map_state_dict_to_unique_activations(state_dict)
@@ -259,12 +261,14 @@ def load_model(model_dir: str, device, num_tfs=1):
 
 
 def model_fn(model_dir, device):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(model_dir, device=device, num_tfs=1)
     return model.to(device)
 
 
-def normalize_atac_pileups(pileups, window_length=5, polyorder=2, method='savgol'):
+def normalize_atac_pileups(pileups,
+                           window_length=5,
+                           polyorder=2,
+                           method='savgol'):
     """
     Reproduce the ATAC preprocessing the model was trained with.
 
@@ -286,28 +290,32 @@ def normalize_atac_pileups(pileups, window_length=5, polyorder=2, method='savgol
     # log10(count) with 0 wherever count <= 0, matching apply_transform(LOG10).
     if method.upper() == "BOTH":
 
-        logged = np.where(pileups > 0, np.log10(pileups, where=pileups > 0), 0.0)
+        logged = np.where(pileups > 0, np.log10(
+            pileups, where=pileups > 0), 0.0)
         # Savitzky-Golay smoothing along the sequence axis (same defaults as SAVGOL).
         window_length = window_length if window_length % 2 == 1 else window_length + 1
         smoothed = savgol_filter(logged, window_length=window_length,
-                                polyorder=polyorder, axis=-1)
+                                 polyorder=polyorder, axis=-1)
         return smoothed
     elif "LOG" in method.upper():
         return np.where(pileups > 0, np.log10(pileups, where=pileups > 0), 0.0)
     elif method.upper() in {"SAVGOL", "SMOOTHING", "SMOOTH", "SMOOTHED"}:
         window_length = window_length if window_length % 2 == 1 else window_length + 1
         smoothed = savgol_filter(pileups, window_length=window_length,
-                                polyorder=polyorder, axis=-1)
+                                 polyorder=polyorder, axis=-1)
         return smoothed
 
 
-def load_atac_pileup_pool(parquet_path, n_pool, normalize=True, drop_empty=True):
+def load_atac_pileup_pool(parquet_path,
+                          n_pool,
+                          normalize: str = None,
+                          drop_empty=True):
     """
     Build a pool of real ATAC pileup windows to sample the background from.
 
-    Reads the first `n_pool` regions of a processed parquet and runs them through
-    call_seqlets.process_region_data_fast, whose third return value is the raw
-    ATAC pileup list of shape (n_pool, 4096).
+    Reads the first `n_pool` regions of a processed parquet and runs them 
+    through call_seqlets.process_region_data_fast, whose third return value is
+    the raw ATAC pileup list of shape (n_pool, 4096).
 
     Parameters
     ----------
@@ -343,7 +351,8 @@ def load_atac_pileup_pool(parquet_path, n_pool, normalize=True, drop_empty=True)
         keep = atac_pileup_list.any(axis=1)
         n_dropped = int((~keep).sum())
         if n_dropped:
-            print(f"Dropping {n_dropped} all-zero pileup windows (no accessibility).")
+            print(
+                f"Dropping {n_dropped} all-zero pileup windows (no accessibility).")
         atac_pileup_list = atac_pileup_list[keep]
 
     if atac_pileup_list.shape[0] == 0:
@@ -353,7 +362,8 @@ def load_atac_pileup_pool(parquet_path, n_pool, normalize=True, drop_empty=True)
         )
 
     if normalize:
-        atac_pileup_list = normalize_atac_pileups(atac_pileup_list)
+        atac_pileup_list = normalize_atac_pileups(
+            atac_pileup_list, method=normalize)
 
     print(f"ATAC pileup pool ready: {atac_pileup_list.shape}")
     return atac_pileup_list
@@ -397,7 +407,12 @@ def plot_margins(y_delta, out_fname, ylim=None):
     idxs = torch.flip(torch.argsort(y_delta.mean(axis=0)), dims=(0,))
     ymax = max(abs(y_delta.min()), abs(y_delta.max())) if not ylim else ylim
 
-    plt.imshow(y_delta[:, idxs].T, aspect='auto', cmap='RdBu_r', vmin=-ymax, vmax=ymax, interpolation='nearest')
+    plt.imshow(y_delta[:, idxs].T,
+               aspect='auto',
+               cmap='RdBu_r',
+               vmin=-ymax,
+               vmax=ymax,
+               interpolation='nearest')
     plt.colorbar(label="Difference in Logits")
     plt.xlabel("Sequence")
     plt.yticks([])
@@ -406,8 +421,34 @@ def plot_margins(y_delta, out_fname, ylim=None):
     plt.close()
 
 
+def to_long(obj, value_name="value"):
+    """One row per (motif, atac_method, position, sample)."""
+    recs = []
+    for motif, by_method in obj.items():
+        for method, by_pos in by_method.items():
+            for pos, arr in by_pos.items():
+                a = np.asarray(arr).reshape(-1)          # (64, 1) -> (64,)
+                recs.append(
+                    pd.DataFrame({
+                        "motif": motif,
+                        "atac_method": method,
+                        "position": pos,
+                        "sample": np.arange(a.size),
+                        value_name: a,
+                    })
+                )
+    df = pd.concat(recs, ignore_index=True)
+    df["motif"] = df["motif"].astype("category")
+    df["atac_method"] = df["atac_method"].astype("category")
+    df["position"] = df["position"].astype("int32")
+    df["sample"] = df["sample"].astype("int32")
+    return df.sort_values(["motif", "atac_method", "position", "sample"],
+                          ignore_index=True)
+
+
 class ChannelsLastWrapper(torch.nn.Module):
     """tangermeme feeds (B, C, L); DeepSeq expects (B, L, C)."""
+
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -428,89 +469,158 @@ def main():
     print(f"Using device: {device}")
     print("="*80)
 
-    # ===================================== CONFIG ===================================== #
-    transcription_factor = "AR"
-    cell_line = "VCAP"
+    TFs_of_interest = {
+        "AR",
+        "FOXA1",
+        "FOXA2",
+        "ERG",
+        # "EGF2",
+        # "EGF1",
+        "MYC",
+        "FOS::JUN",
+        "JUN",
+        "JUNB",
+        "JUND",
+        "NR3C1",
+        "POU5F1",
+        "CTCF",
+        "ASCL1",
+        "HOXB13",
+    }
 
-    # --- Spike-In config ------------------------------------------------------------
-    seq_step = 1000
+    # =============================== CONFIG =============================== #
+    transcription_factor = "FOXA1"
+    cell_line = "22Rv1"
+
+    save_timestamp = False  # print timestamp in output directory?
+
+    # --- Spike-In config -----------------------------------------------------
+    n_samples = 2 ** 5
+    seq_step = 2 ** 4
     include_zero_spikein = True
-    motif_path = "/home/ec2-user/tf-binding/data/jaspar_motif_memes/JASPAR2026_steroid_hormone_receptors.meme"
-    # --------------------------------------------------------------------------------
+    limit_motifs = True
+    # -------------------------------------------------------------------------
 
-    # --- Real-ATAC background config -------------------------------------------------
+    # --- Real-ATAC background config -----------------------------------------
     # Processed parquet to source real ATAC pileup windows from. Any processed parquet
     # with chr_name/start/end/cell_line/attributions works; swap as needed.
-    N_PILEUP_POOL = 2048                 # regions to read into the sampling pool
-    NORMALIZE_ATAC = False               # apply the model's log10 + SavGol ATAC preprocessing
-    atac_methods = ['keep', 'shuffle']   # any of [ 'keep' | 'zeros' | 'ones' | 'random' | 'shuffle' ]
-    # --------------------------------------------------------------------------------
+    N_PILEUP_POOL = 2048            # regions to read into the sampling pool
+    # apply the model's log10 and/or SavGol ATAC preprocessing ['log' | 'savgol' | 'both' | None]
+    NORMALIZE_ATAC = "both"
+    atac_methods = [                # any of [ 'keep' | 'zeros' | 'ones' | 'random' | 'shuffle' ]
+        'keep',
+        # 'ones',
+        # 'zeros',
+        # 'shuffle',
+        # 'random',
+    ]
+    # -------------------------------------------------------------------------
 
-    
-    # ================================================================================== #
+    # ======================================================================= #
 
-
-    today = datetime.now().strftime("%Y%m%d")
+    time_zone = ZoneInfo("America/Los_Angeles")
     tag = f"{transcription_factor}_{cell_line}"
 
-    root_dir = "/home/ec2-user/tf-binding"
-    out_dir = os.path.join(root_dir, "marginalization_output")
+    root_dir = "/home/ec2-user/projects/tf-binding"
+    os.makedirs(os.path.join(
+        root_dir, "marginalization_output"), exist_ok=True)
+    model_dir = os.path.join(root_dir, f"data/models/{transcription_factor}")
+    motif_path = os.path.join(
+        root_dir, "data/jaspar_motif_memes/JASPAR_CORE_human_latest.meme")
+
+    ts = datetime.now(tz=time_zone).strftime("%Y%m%d:%H%M")
+    if save_timestamp:
+        out_dir = os.path.join(root_dir, f"marginalization_output/{tag}_{ts}")
+    else:
+        out_dir = os.path.join(root_dir, f"marginalization_output/{tag}")
+
     os.makedirs(out_dir, exist_ok=True)
-    model_dir = os.path.join(root_dir, "data/models")
 
 
     model = model_fn(model_dir, device=device)
     wrapped = ChannelsLastWrapper(model)
 
-    n_samples = 64
-
     raw_motifs = read_meme(motif_path)
-    print("="*80)
     motifs = dict()
     for name, ohe in raw_motifs.items():
-        tf = name.split(".")[-1]
-        print(tf)
-        motif_str = characters(pwm_consensus(ohe, thresh=0.5), alphabet=['A', 'C', 'G', 'T', 'N'])
-        print(motif_str)
-        print("="*80)
+        tf = name.split(" ")[-1]
+        # tf = name
+        # print(tf)
+        motif_str = characters(pwm_consensus(ohe, thresh=0.5), alphabet=[
+                               'A', 'C', 'G', 'T', 'N'])
+        # print(motif_str)
+        # print("="*80)
         motifs[tf] = motif_str
+
+    if limit_motifs:
+        motifs = {k: v for k, v in motifs.items() if k.upper()
+                  in TFs_of_interest}
+        not_found = TFs_of_interest - set(motifs.keys())
+        if len(not_found) > 0:
+            print("="*90)
+            print(f"[WARNING] The following TFs were not found in the motif file: {not_found}")
+            print("="*90)
+
+    for k, v in motifs.items():
+        print("="*80)
+        print(k)
+        print(v)
+    print("="*80)
+
+    config = {
+        "transcription_factor": transcription_factor,
+        "cell_line": cell_line,
+        "limit_motifs": limit_motifs,
+        "TFs_of_interest": list(TFs_of_interest),
+        "not_found": list(not_found) if limit_motifs else "NA",
+        "n_samples": n_samples,
+        "seq_step": seq_step,
+        "include_zero_spikein": include_zero_spikein,
+        "motif_path": motif_path,
+        "N_PILEUP_POOL": N_PILEUP_POOL,
+        "NORMALIZE_ATAC": NORMALIZE_ATAC,
+        "atac_methods": atac_methods,
+        "model_dir": model_dir,
+    }
+    with open(os.path.join(out_dir, "config.json"), "w") as f:
+        json.dump(config, f, indent=4)
+
     print("="*80)
     print(f"Analyzing {len(motifs)} motifs.")
     print("="*80)
 
-    
     # starts = range(0, 4001, 25)
     if include_zero_spikein:
         starts = [i for i in range(0, 4001, seq_step)]
     else:
         starts = [i for i in range(0, 4001, seq_step)][1:]
 
-    atac_source_parquet = os.path.join(root_dir, f"data/attr_parquets/{tag}_processed.parquet")
+    atac_source_parquet = os.path.join(
+        root_dir, f"data/attr_parquets/{tag}_processed.parquet")
     # Build the background from REAL ATAC pileup windows instead of from scratch.
     atac_pool = load_atac_pileup_pool(atac_source_parquet, n_pool=N_PILEUP_POOL,
-                                    normalize=NORMALIZE_ATAC)
+                                      normalize=NORMALIZE_ATAC)
     X = synthetic_data_existingATAC(atac_pool, n_samples=n_samples)
     X.shape
 
-
     results = dict()
-    for TF in tqdm(motifs.keys(), desc="Motif"):
+    for TF in tqdm(motifs.keys(), desc="Motifs"):
         motif = motifs[TF]
         atac_results = dict()
-        for atac_method in tqdm(atac_methods, desc="Marginalization", leave=False):
+        for atac_method in tqdm(atac_methods, 
+                                desc="ATAC Methods", 
+                                leave=False):
             motif_position_results = dict()
-            for motif_position in starts:
-                print("="*90)
-                print(f"Using {TF} motif: {motif}")
-                print()
-                print("Using parameters:")
-                print(f"  ATAC METHOD: {atac_method}")
-                print(f"  START: {motif_position}")
-                print(f"  n SAMPLES: {n_samples}")
-                print("="*90)
-
-                out_fname = os.path.join(out_dir, f"{today}_{TF}_existingATAC_{atac_method}_{motif_position}.png")
-
+            for motif_position in tqdm(starts, 
+                                       desc="Positions", 
+                                       leave=False):
+                tqdm.write("="*90)
+                tqdm.write(f"Using {TF} motif: {motif}")
+                tqdm.write("")
+                tqdm.write("Using parameters:")
+                tqdm.write(f"  ATAC METHOD: {atac_method}")
+                tqdm.write(f"  START: {motif_position}")
+                tqdm.write(f"  n SAMPLES: {n_samples}")
 
                 if isinstance(motif_position, str):
                     if motif_position.lower() == "center":
@@ -518,16 +628,22 @@ def main():
                 elif isinstance(motif_position, int):
                     start = motif_position
                 else:
-                    raise ValueError(f"Invalid motif_position parameter ({motif_position}, {type(motif_position)}). Must be an integer < (4096 - motif length) OR 'center'.")
-                y_before, y_after = marginalize(wrapped, X, motif, start=start, device=device, atac_method=atac_method, verbose=False)
+                    raise ValueError(
+                        f"Invalid motif_position parameter ({motif_position}, {type(motif_position)}). Must be an integer < (4096 - motif length) OR 'center'.")
+                y_before, y_after = marginalize(
+                    wrapped, X, motif, start=start, device=device, atac_method=atac_method, verbose=False)
                 y_delta = y_after - y_before
                 motif_position_results[motif_position] = y_delta
-                # plot_margins(y_delta, out_fname=out_fname, ylim=1.5)
+                tqdm.write("Finished! Statistics:")
+                tqdm.write(f"  Mean delta:\n    {y_delta.mean():.4f}")
+                tqdm.write(f"  Median delta:\n    {y_delta.median():.4f}")
+                tqdm.write("="*90)
             atac_results[atac_method] = motif_position_results
+
         results[TF] = atac_results
 
-    with open(os.path.join(out_dir, "jaspar_all_results_existingATAC.pkl"), "wb") as f:
-        pickle.dump(results, f)
+    df = to_long(results)
+    df.to_csv(os.path.join(out_dir, "marginalization_values.csv"), index=False)
 
 
 if __name__ == "__main__":
